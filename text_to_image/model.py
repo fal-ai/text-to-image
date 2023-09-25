@@ -7,20 +7,6 @@ from pydantic import BaseModel, Field
 
 from text_to_image.runtime import SUPPORTED_SCHEDULERS, GlobalRuntime
 
-requirements = [
-    "git+https://github.com/huggingface/diffusers.git@38a664a3d61e27ab18",
-    "transformers",
-    "xformers",
-    "torch>=2.0",
-    "torchvision",
-    "safetensors",
-    "pytorch-lightning",
-    "accelerate",
-    "omegaconf",
-    "invisible-watermark",
-    "pydantic==1.10.12",
-]
-
 
 @cached
 def load_session():
@@ -189,6 +175,7 @@ def wrap_excs():
         "omegaconf",
         "invisible-watermark",
         "pydantic==1.10.12",
+        "google-cloud-storage",
     ],
     machine_type="GPU",
     keep_alive=4000,
@@ -240,5 +227,5 @@ def generate_image(input: InputParameters) -> OutputParameters:
                 **kwargs,
             )
 
-            images = [Image.from_pil(image) for image in result.images]
+            images = session.upload_images(result.images)
             return OutputParameters(images=images, seed=seed)

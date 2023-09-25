@@ -1,12 +1,18 @@
 import copy
+import os
 import time
 import traceback
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
 
+from fal.toolkit import Image
+from fal.toolkit.file import FileRepository
+from fal.toolkit.file.providers.gcp import GoogleStorageRepository
 from pydantic import BaseModel, Field
 
 from text_to_image.loras import (
@@ -76,6 +82,15 @@ class GlobalRuntime:
     MAX_CAPACITY: ClassVar[int] = 5
 
     models: dict[tuple[str, ...], Model] = field(default_factory=dict)
+    executor: ThreadPoolExecutor = field(default_factory=ThreadPoolExecutor)
+    repository: str | FileRepository = "fal"
+
+    def __post_init__(self):
+        if os.getenv("GCLOUD_SA_JSON"):
+            self.repository = GoogleStorageRepository(
+                url_expiration=2 * 24 * 60,  # 2 days, same as fal,
+                bucket_name=os.getenv("GCS_BUCKET_NAME", "fal_file_storage"),
+            )
 
     def download_model_if_needed(self, model_name: str) -> str:
         CHECKPOINTS_DIR.mkdir(exist_ok=True, parents=True)
@@ -327,3 +342,10 @@ class GlobalRuntime:
             yield
         finally:
             pipe.scheduler = original_scheduler
+
+    def upload_images(self, images: list[object]) -> list[Image]:
+        print("Uploading images...")
+        image_uploader = partial(Image.from_pil, repository=self.repository)
+        res = list(self.executor.map(image_uploader, images))
+        print("Done uploading images.")
+        return res
