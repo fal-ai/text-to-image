@@ -193,7 +193,7 @@ class GlobalRuntime:
             f"| auxiliary={auxiliary_features}"
         )
 
-    def get_model(self, model_name: str, arch: str) -> Model:
+    def load_model_from_scratch(self, model_name: str, arch: str) -> Model:
         import torch
         from diffusers import (
             DiffusionPipeline,
@@ -201,48 +201,56 @@ class GlobalRuntime:
             StableDiffusionXLPipeline,
         )
 
+        if model_name.endswith(".ckpt") or model_name.endswith(".safetensors"):
+            if arch == "sdxl":
+                pipeline_cls = StableDiffusionXLPipeline
+            else:
+                pipeline_cls = StableDiffusionPipeline
+
+            pipe = pipeline_cls.from_single_file(
+                model_name,
+                torch_dtype=torch.float16,
+                local_files_only=True,
+            )
+        else:
+            pipe = DiffusionPipeline.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16,
+            )
+
+        if hasattr(pipe, "watermark"):
+            pipe.watermark = None
+
+        self.run_garbage_collector()
+        try:
+            pipe = pipe.to("cuda")
+        except RuntimeError:
+            # We are out of memory, start unloading models.
+            pipe = None
+            oom = True
+        else:
+            oom = False
+
+        if oom:
+            self.run_garbage_collector(force_evict=True)
+            pipe = pipe.to("cuda")
+
+        assert pipe is not None
+        return Model(pipe)
+
+    def get_model(self, model_name: str, arch: str) -> Model:
         model_key = (model_name, arch)
         if model_key not in self.models:
-            # Maybe in the future we can offload the model to the disk.
-            if len(self.models) >= self.MAX_CAPACITY:
-                by_last_hit = lambda kv: kv[1].last_cache_hit
-                oldest_model_key, _ = min(self.models.items(), key=by_last_hit)
-                print("Unloading model:", oldest_model_key)
-                del self.models[oldest_model_key]
-
-            if model_name.endswith(".ckpt") or model_name.endswith(".safetensors"):
-                if arch is None:
-                    if "xl" in model_name.lower():
-                        arch = "sdxl"
-                    else:
-                        arch = "sd"
-
-                    print(f"Guessing {arch} architecture for {model_name}")
-
-                if arch == "sdxl":
-                    pipeline_cls = StableDiffusionXLPipeline
-                else:
-                    pipeline_cls = StableDiffusionPipeline
-
-                pipe = pipeline_cls.from_single_file(
-                    model_name,
-                    torch_dtype=torch.float16,
-                    local_files_only=True,
-                )
-            else:
-                pipe = DiffusionPipeline.from_pretrained(
-                    model_name,
-                    torch_dtype=torch.float16,
-                )
-
-            if hasattr(pipe, "watermark"):
-                pipe.watermark = None
-
-            pipe.enable_xformers_memory_efficient_attention()
-            pipe = pipe.to("cuda")
-            self.models[model_key] = Model(pipe)
+            self.models[model_key] = self.load_model_from_scratch(model_name, arch)
 
         return self.models[model_key]
+
+    def run_garbage_collector(self, force_evict: bool = False):
+        if len(self.models) >= self.MAX_CAPACITY or force_evict:
+            by_last_hit = lambda kv: kv[1].last_cache_hit
+            oldest_model_key, _ = min(self.models.items(), key=by_last_hit)
+            print("Unloading model:", oldest_model_key)
+            del self.models[oldest_model_key]
 
     @contextmanager
     def load_model(

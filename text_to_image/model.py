@@ -10,7 +10,6 @@ from text_to_image.runtime import SUPPORTED_SCHEDULERS, GlobalRuntime
 requirements = [
     "git+https://github.com/huggingface/diffusers.git@38a664a3d61e27ab18",
     "transformers",
-    "xformers",
     "torch>=2.0",
     "torchvision",
     "safetensors",

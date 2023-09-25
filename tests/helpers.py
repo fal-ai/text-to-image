@@ -27,7 +27,7 @@ class BaseModelTest:
 
         model_outputs = self.generate(input)
         sanitized_model_outputs = self.sanitize_output(model_outputs)
-        assert sanitized_model_outputs == output
+        assert sanitized_model_outputs == output, repr(sanitized_model_outputs)
 
     def sanitize_output(self, output: BaseModel) -> ModelTestParamType:
         sanitized_output = {}
