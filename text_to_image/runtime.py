@@ -1,4 +1,3 @@
-import copy
 import os
 import time
 import traceback
@@ -282,6 +281,9 @@ class GlobalRuntime:
         model = self.get_model(model_name, arch=arch)
         pipe = model.as_base()
 
+        if clip_skip:
+            print(f"Ignoring clip_skip={clip_skip} for now, it's not supported yet!")
+
         with self.change_scheduler(pipe, scheduler):
             try:
                 if loras:
@@ -289,19 +291,8 @@ class GlobalRuntime:
                 else:
                     global_scale = None
 
-                if clip_skip > 0:
-                    original_layers = copy.copy(
-                        pipe.text_encoder.text_model.encoder.layers
-                    )
-                    pipe.text_encoder.text_model.encoder.layers = original_layers[
-                        :-clip_skip
-                    ]
-
                 yield (pipe, global_scale)
             finally:
-                if clip_skip > 0:
-                    pipe.text_encoder.text_model.encoder.layers = original_layers
-
                 if loras:
                     try:
                         pipe.unfuse_lora()

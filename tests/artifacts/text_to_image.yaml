@@ -56,28 +56,29 @@
       - a9ca432ebd3487f7a2755a60b93088ba42582d68420e874e8b1170c4382787c8
     seed: 3088576288
 
-- name: Playground FF Cloud Strife
-  input:
-    model_name: https://civitai.com/api/download/models/95489
-    prompt: ff7r style, 1boy, male focus, solo, blonde hair, jewelry, earrings, sword, spiked hair, turtleneck, portrait, armor, upper body, blurry background, closed mouth, weapon on back, realistic, single earring , ((masterpiece)) <lora:ff7r_style_ned_offset:1>
-    seed: 3187489595
-    image_size:
-      width: 512
-      height: 768
-    clip_skip: 2
-    loras:
-      - path: https://civitai.com/api/download/models/60948
-        scale: 1
-    num_inference_steps: 80
-    guidance_scale: 9
-    negative_prompt: nsfw, (worst quality, low quality:1.3), (depth of field, blurry:1.2), (greyscale, monochrome:1.1), 3D face, nose, cropped, lowres, text, jpeg artifacts, signature, watermark, username, blurry, artist name, trademark, watermark, title, (tan, muscular, loli, petite, child, infant, toddlers, chibi, sd character:1.1), multiple view, Reference sheet,
-    scheduler: DPM++ 2M
-    num_images: 1
+# Clip Skip is ignored for now, we don't support it yet.
+# - name: Playground FF Cloud Strife
+#   input:
+#     model_name: https://civitai.com/api/download/models/95489
+#     prompt: ff7r style, 1boy, male focus, solo, blonde hair, jewelry, earrings, sword, spiked hair, turtleneck, portrait, armor, upper body, blurry background, closed mouth, weapon on back, realistic, single earring , ((masterpiece)) <lora:ff7r_style_ned_offset:1>
+#     seed: 3187489595
+#     image_size:
+#       width: 512
+#       height: 768
+#     clip_skip: 2
+#     loras:
+#       - path: https://civitai.com/api/download/models/60948
+#         scale: 1
+#     num_inference_steps: 80
+#     guidance_scale: 9
+#     negative_prompt: nsfw, (worst quality, low quality:1.3), (depth of field, blurry:1.2), (greyscale, monochrome:1.1), 3D face, nose, cropped, lowres, text, jpeg artifacts, signature, watermark, username, blurry, artist name, trademark, watermark, title, (tan, muscular, loli, petite, child, infant, toddlers, chibi, sd character:1.1), multiple view, Reference sheet,
+#     scheduler: DPM++ 2M
+#     num_images: 1
 
-  output:
-    images:
-      - c03a3a613f7e8731f034f59868603316582ed2da32184171ed644e336293498c
-    seed: 3187489595
+#   output:
+#     images:
+#       - c03a3a613f7e8731f034f59868603316582ed2da32184171ed644e336293498c
+#     seed: 3187489595
 
 - name: Playground Red Mustang
   input:
