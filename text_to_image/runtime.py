@@ -138,7 +138,7 @@ class GlobalRuntime:
                     total_size = int(response.headers.get("content-length", 0))
                     while data := response.read(CHUNK_SIZE):
                         f_stream.write(data)
-                        if total_size:
+                        if total_size > 0:
                             progress_msg = f"Downloading {url}... {f_stream.tell() / total_size:.2%}"
                         else:
                             progress_msg = f"Downloading {url}... {f_stream.tell() / ONE_MB:.2f} MB"
@@ -146,6 +146,12 @@ class GlobalRuntime:
             except Exception:
                 os.remove(tmp_file)
                 raise
+
+            if total_size > 0 and total_size != os.path.getsize(tmp_file):
+                os.remove(tmp_file)
+                raise ValueError(
+                    f"Downloaded file {tmp_file} is not the same size as the remote file."
+                )
 
             # Only move when the download is complete.
             shutil.move(tmp_file, download_path)

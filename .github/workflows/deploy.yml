@@ -27,4 +27,5 @@ jobs:
           FAL_KEY_ID: ${{ secrets.FAL_KEY_ID }}
           FAL_KEY_SECRET: ${{ secrets.FAL_KEY_SECRET }}
         run: |
+          fal alias update lora --keep-alive=60
           fal fn serve text_to_image/model.py generate_image --alias lora --auth shared
