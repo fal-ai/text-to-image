@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from functools import partial
 from typing import Literal
 
 from fal import cached, function
@@ -176,11 +177,12 @@ def wrap_excs():
         "invisible-watermark",
         "pydantic==1.10.12",
         "google-cloud-storage",
+        "psutil",
     ],
     machine_type="GPU",
-    keep_alive=4000,
+    keep_alive=300,
     serve=True,
-    max_concurrency=30,
+    max_concurrency=1,
     _scheduler="nomad",
 )
 def generate_image(input: InputParameters) -> OutputParameters:
@@ -206,7 +208,14 @@ def generate_image(input: InputParameters) -> OutputParameters:
         ) as (pipe, global_lora_scale):
             seed = input.seed or torch.seed()
 
+            print("Loaded models:")
+            for model in session.models:
+                print(f"{model[0]} device: {session.models[model].device()}")
+
             kwargs = {
+                "prompt": input.prompt,
+                "negative_prompt": input.negative_prompt,
+                "num_images_per_prompt": input.num_images,
                 "num_inference_steps": input.num_inference_steps,
                 "guidance_scale": input.guidance_scale,
                 "generator": torch.manual_seed(seed),
@@ -220,12 +229,21 @@ def generate_image(input: InputParameters) -> OutputParameters:
                 kwargs["cross_attention_kwargs"] = {"scale": global_lora_scale}
 
             print(f"Generating {input.num_images} images...")
-            result = pipe(
-                prompt=input.prompt,
-                negative_prompt=input.negative_prompt,
-                num_images_per_prompt=input.num_images,
-                **kwargs,
+            make_inference = partial(pipe, **kwargs)
+            result = session.with_backoff_cuda_retry(
+                make_inference, keep_last_model=True
             )
 
             images = session.upload_images(result.images)
             return OutputParameters(images=images, seed=seed)
+
+
+if __name__ == "__main__":
+    input = InputParameters(
+        model_name=f"https://civitai.com/api/download/models/196039",
+        prompt="Photo of a classic red mustang car parked in las vegas strip at night",
+        model_architecture="sdxl",
+    )
+    local = generate_image.on(serve=False)
+    output = local(input)
+    print(output)
