@@ -372,15 +372,17 @@ class GlobalRuntime:
                     "CUDA out of memory",
                     "INTERNAL ASSERT FAILED",
                 ]
-                if not any(error_str in str(error) for error_str in __cuda_oom_errors):
+                if (
+                    not any(error_str in str(error) for error_str in __cuda_oom_errors)
+                    or not cached_models
+                ):
                     raise
 
                 # Since cached_models is sorted by last cache hit, we'll pop the the
                 # model with the oldest cache hit and try again.
                 target_model_id = cached_models.pop()
                 self.offload_model_to_cpu(target_model_id)
-                if not cached_models:
-                    self.empty_cache()
+                self.empty_cache()
 
         self.empty_cache()
         raise RuntimeError("Not enough CUDA memory to complete the operation.")
