@@ -155,11 +155,11 @@ def wrap_excs():
 
     try:
         yield
-    except Exception:
+    except (ValueError, TypeError) as exc:
         import traceback
 
         traceback.print_exc()
-        raise HTTPException(status_code=422, detail=traceback.format_exc())
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @function(
@@ -180,9 +180,9 @@ def wrap_excs():
         "psutil",
     ],
     machine_type="GPU",
-    keep_alive=300,
+    keep_alive=4000,
     serve=True,
-    max_concurrency=1,
+    max_concurrency=30,
     _scheduler="nomad",
 )
 def generate_image(input: InputParameters) -> OutputParameters:
@@ -207,11 +207,6 @@ def generate_image(input: InputParameters) -> OutputParameters:
             model_architecture=input.model_architecture,
         ) as (pipe, global_lora_scale):
             seed = input.seed or torch.seed()
-
-            print("Loaded models:")
-            for model in session.models:
-                print(f"{model[0]} device: {session.models[model].device()}")
-
             kwargs = {
                 "prompt": input.prompt,
                 "negative_prompt": input.negative_prompt,
@@ -230,9 +225,7 @@ def generate_image(input: InputParameters) -> OutputParameters:
 
             print(f"Generating {input.num_images} images...")
             make_inference = partial(pipe, **kwargs)
-            result = session.with_backoff_cuda_retry(
-                make_inference, keep_last_model=True
-            )
+            result = session.execute_on_cuda(make_inference, ignored_models=[pipe])
 
             images = session.upload_images(result.images)
             return OutputParameters(images=images, seed=seed)

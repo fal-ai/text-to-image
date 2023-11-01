@@ -1,3 +1,4 @@
+import gc
 import os
 import time
 import traceback
@@ -47,7 +48,7 @@ SUPPORTED_SCHEDULERS = {
 }
 
 # Amount of RAM to use as buffer, in percentages.
-RAM_BUFFER_PERCENTAGE = 0.75
+RAM_BUFFER_PERCENTAGE = 1 - 0.75
 
 
 @dataclass
@@ -285,9 +286,7 @@ class GlobalRuntime:
 
         model = self.get_model(model_name, arch=arch)
         pipe = model.as_base()
-
-        pipe_to_cuda = partial(pipe.to, "cuda")
-        pipe = self.with_backoff_cuda_retry(pipe_to_cuda)
+        pipe = self.execute_on_cuda(partial(pipe.to, "cuda"))
 
         if clip_skip:
             print(f"Ignoring clip_skip={clip_skip} for now, it's not supported yet!")
@@ -349,83 +348,87 @@ class GlobalRuntime:
         print("Done uploading images.")
         return res
 
-    def with_backoff_cuda_retry(
+    def execute_on_cuda(
         self,
         function: Callable[..., Any],
-        keep_last_model: bool = False,
+        *,
+        ignored_models: list[object] | None = None,
     ):
-        loaded_models_on_cuda = self.get_loaded_models_by_device("cuda")
+        cached_models = self.get_loaded_models_by_device(
+            "cuda",
+            ignored_models=ignored_models or [],
+        )
 
-        if keep_last_model:
-            last_item = max(loaded_models_on_cuda, key=self._get_model_last_cache_hit)
-            loaded_models_on_cuda.remove(last_item)
+        first_try = True
+        while first_try or cached_models:
+            first_try = False
 
-        while True:
             try:
-                result = function()
+                return function()
             except RuntimeError as error:
                 # Only retry if the error is a CUDA OOM error.
                 # https://github.com/facebookresearch/detectron2/blob/main/detectron2/utils/memory.py#L19
-                if "CUDA out of memory. " in str(error):
-                    # No more models to unload.
-                    if not loaded_models_on_cuda:
-                        break
-
-                    lru_model_id = min(
-                        loaded_models_on_cuda, key=self._get_model_last_cache_hit
-                    )
-                    self.unload_model_from_cuda(lru_model_id)
-                    loaded_models_on_cuda.remove(lru_model_id)
-                else:
-                    # If the error is not a CUDA OOM error, raise it as is.
+                __cuda_oom_errors = [
+                    "CUDA out of memory",
+                    "INTERNAL ASSERT FAILED",
+                ]
+                if not any(error_str in str(error) for error_str in __cuda_oom_errors):
                     raise
-            else:
-                return result
+
+                # Since cached_models is sorted by last cache hit, we'll pop the the
+                # model with the oldest cache hit and try again.
+                target_model_id = cached_models.pop()
+                self.offload_model_to_cpu(target_model_id)
+                if not cached_models:
+                    self.empty_cache()
 
         self.empty_cache()
         raise RuntimeError("Not enough CUDA memory to complete the operation.")
 
-    def get_loaded_models_by_device(self, device: DeviceType):
-        return [
+    def get_loaded_models_by_device(
+        self,
+        device: DeviceType,
+        ignored_models: list[object],
+    ):
+        models = [
             model_id
             for model_id in self.models
             if self.models[model_id].device() == device
+            if self.models[model_id].pipeline not in ignored_models
         ]
-
-    def _get_model_last_cache_hit(self, model_id: tuple[str, ...]) -> float:
-        return self.models[model_id].last_cache_hit
-
-    def unload_model_from_cuda(self, model_id):
-        self.offload_model_to_cpu(model_id)
-        self.remove_models_from_cpu()
+        models.sort(key=lambda model_id: self.models[model_id].last_cache_hit)
+        return models
 
     def offload_model_to_cpu(self, model_id: tuple[str, ...]):
-        print(f"Offloading the model {model_id} to CPU.")
+        print(f"Offloading model={model_id} to CPU.")
+
+        def is_ram_buffer_full():
+            import psutil
+
+            memory = psutil.virtual_memory()
+            percent_available = memory.available / memory.total
+            return percent_available < RAM_BUFFER_PERCENTAGE
+
+        models = self.get_loaded_models_by_device("cuda", ignored_models=[])
+        while is_ram_buffer_full():
+            if not models:
+                print(
+                    f"Not enough RAM to offload the model to CPU, evicting {model_id}"
+                    "it directly."
+                )
+                del self.models[model_id]
+                gc.collect()
+                return
+
+            lru_model_id = models.pop()
+            print(f"Offloading model={lru_model_id} back to disk.")
+            del self.models[lru_model_id]
+            gc.collect()
 
         model = self.models[model_id]
         model.pipeline = model.pipeline.to("cpu")
 
-    def remove_models_from_cpu(self):
-        import psutil
-
-        while True:
-            available_memory = psutil.virtual_memory().available
-            total_memory = psutil.virtual_memory().total
-            percent_available = available_memory / total_memory
-            loaded_models_on_cpu = self.get_loaded_models_by_device("cpu")
-
-            print("Available CPU:", round(percent_available, 2))
-            if percent_available > RAM_BUFFER_PERCENTAGE or not loaded_models_on_cpu:
-                break
-
-            lru_model_id = min(loaded_models_on_cpu, key=self._get_model_last_cache_hit)
-
-            print(f"Removing the model {lru_model_id} to free memory for buffer.")
-            del self.models[lru_model_id]
-
     def empty_cache(self):
-        import gc
-
         import torch
 
         gc.collect()
