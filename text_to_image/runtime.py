@@ -126,7 +126,7 @@ class GlobalRuntime:
         import tempfile
         from hashlib import md5
         from urllib.parse import urlparse
-        from urllib.request import Request, urlopen
+        from urllib.request import HTTPError, Request, urlopen
 
         if extension is not None and url.endswith(".ckpt"):
             raise ValueError("Can't load non-safetensor model files.")
@@ -150,6 +150,12 @@ class GlobalRuntime:
                         else:
                             progress_msg = f"Downloading {url}... {f_stream.tell() / ONE_MB:.2f} MB"
                         print(progress_msg)
+                    f_stream.flush()
+            except HTTPError as exc:
+                os.remove(tmp_file)
+                raise ValueError(
+                    f"Couldn't download weights from the given URL: {url}. Possible cause is: {str(exc)}"
+                )
             except Exception:
                 os.remove(tmp_file)
                 raise
@@ -231,14 +237,6 @@ class GlobalRuntime:
         model_key = (model_name, arch)
         if model_key not in self.models:
             if model_name.endswith(".ckpt") or model_name.endswith(".safetensors"):
-                if arch is None:
-                    if "xl" in model_name.lower():
-                        arch = "sdxl"
-                    else:
-                        arch = "sd"
-
-                    print(f"Guessing {arch} architecture for {model_name}")
-
                 if arch == "sdxl":
                     pipeline_cls = StableDiffusionXLPipeline
                 else:
@@ -280,7 +278,10 @@ class GlobalRuntime:
                 arch = "sdxl"
             else:
                 arch = "sd"
-            print(f"Guessing {arch} architecture for {model_name}")
+            print(
+                f"Guessing {arch} architecture for {model_name}. If this is wrong, "
+                "please specify it as part of the model_architecture parameter."
+            )
         else:
             arch = model_architecture
 
