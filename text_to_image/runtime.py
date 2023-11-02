@@ -411,7 +411,7 @@ class GlobalRuntime:
             percent_available = memory.available / memory.total
             return percent_available < RAM_BUFFER_PERCENTAGE
 
-        models = self.get_loaded_models_by_device("cuda", ignored_models=[])
+        models = self.get_loaded_models_by_device("cpu", ignored_models=[])
         while is_ram_buffer_full():
             if not models:
                 print(
