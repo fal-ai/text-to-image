@@ -1,2 +1,3 @@
 httpx
+image-similarity-measures[speedups]
 pytest
