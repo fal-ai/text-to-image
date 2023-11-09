@@ -14,7 +14,7 @@ SIMILARITY_THRESHOLD = 0.8
 local_test_fn = generate_image.on(
     serve=False,
     keep_alive=600,
-    _scheduler=None,
+    _scheduler="nomad",
 )
 
 TEST_CASES = [
@@ -99,6 +99,24 @@ TEST_CASES = [
             "num_images": 1,
         },
         "output": {"images": ["fal_file_storage/60db9268799542bc987bef0ac56c894e.png"]},
+    },
+    {
+        "name": "LCM x SDXL lora",
+        "input": {
+            "model_name": "stabilityai/stable-diffusion-xl-base-1.0",
+            "prompt": "Self-portrait of a colorpoint british shorthair, 8k",
+            "seed": 13077596251214904743,
+            "num_inference_steps": 4,
+            "guidance_scale": 0,
+            "scheduler": "LCM",
+            "loras": [
+                {
+                    "path": "https://huggingface.co/latent-consistency/lcm-lora-sdxl/resolve/main/pytorch_lora_weights.safetensors",
+                    "scale": 1,
+                }
+            ],
+        },
+        "output": {"images": ["fal_file_storage/1e57c30cedc04c9d89e3d4990b36c506.png"]},
     },
 ]
 

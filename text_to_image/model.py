@@ -165,7 +165,7 @@ def wrap_excs():
 @function(
     "virtualenv",
     requirements=[
-        "git+https://github.com/huggingface/diffusers.git",
+        "diffusers==0.23.0",
         "transformers",
         "accelerate",
         "torch>=2.1",
@@ -231,10 +231,20 @@ def generate_image(input: InputParameters) -> OutputParameters:
 
 if __name__ == "__main__":
     input = InputParameters(
-        model_name=f"https://civitai.com/api/download/models/196039",
-        prompt="Photo of a classic red mustang car parked in las vegas strip at night",
-        model_architecture="sdxl",
+        model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
+        prompt="Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
+        loras=[
+            LoraWeight(
+                path="https://huggingface.co/latent-consistency/lcm-lora-sdxl/resolve/main/pytorch_lora_weights.safetensors",
+                scale=1,
+            )
+        ],
+        guidance_scale=0,
+        num_inference_steps=4,
+        num_images=4,
+        scheduler="LCM",
     )
     local = generate_image.on(serve=False)
     output = local(input)
-    print(output)
+    for image in output.images:
+        print(image.url)

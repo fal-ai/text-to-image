@@ -45,6 +45,7 @@ SUPPORTED_SCHEDULERS = {
     ),
     "Euler": ("EulerDiscreteScheduler", {}),
     "Euler A": ("EulerAncestralDiscreteScheduler", {}),
+    "LCM": ("LCMScheduler", {}),
 }
 
 # Amount of RAM to use as buffer, in percentages.
@@ -131,9 +132,12 @@ class GlobalRuntime:
         if extension is not None and url.endswith(".ckpt"):
             raise ValueError("Can't load non-safetensor model files.")
 
-        url_file = CACHE_PREFIX + urlparse(url).path.split("/")[-1].strip(".")
+        url_file = CACHE_PREFIX + urlparse(url).path.split("/")[-1].strip(".").replace(
+            ".", "_"
+        )
         url_hash = md5(url.encode()).hexdigest()
         download_path = directory / f"{url_file}-{url_hash}"
+
         if extension:
             download_path = download_path.with_suffix("." + extension)
 
@@ -323,7 +327,12 @@ class GlobalRuntime:
 
         scheduler_cls_name, scheduler_kwargs = SUPPORTED_SCHEDULERS[scheduler_name]
         scheduler_cls = getattr(diffusers, scheduler_cls_name)
-        if scheduler_cls not in pipe.scheduler.compatibles:
+        if (
+            scheduler_cls not in pipe.scheduler.compatibles
+            # Apparently LCM doesn't get reported as a compatible scheduler even
+            # though it works.
+            and scheduler_cls_name != "LCMScheduler"
+        ):
             compatibles = ", ".join(cls.__name__ for cls in pipe.scheduler.compatibles)
             raise ValueError(
                 f"The scheduler {scheduler_name} is not compatible with this model.\n"
