@@ -15,8 +15,6 @@ from fal.toolkit.file import FileRepository
 from fal.toolkit.file.providers.gcp import GoogleStorageRepository
 from pydantic import BaseModel, Field
 
-from text_to_image.loras import determine_auxiliary_features, identify_lora_weights
-
 DeviceType = Literal["cpu", "cuda"]
 
 CHECKPOINTS_DIR = Path("/data/checkpoints")
@@ -193,17 +191,6 @@ class GlobalRuntime:
 
         pipe.set_adapters(adapter_names=adapter_names, adapter_weights=lora_scales)
         pipe.fuse_lora()
-
-    def check_lora_compatibility(
-        self, lora_name: str, state_dict: dict[str, Any]
-    ) -> None:
-        lora_formats = identify_lora_weights(state_dict)
-        auxiliary_features = determine_auxiliary_features(lora_formats, state_dict)
-        print(
-            f"LoRA {lora_name}: "
-            f"formats={lora_formats} "
-            f"| auxiliary={auxiliary_features}"
-        )
 
     def get_model(self, model_name: str, arch: str) -> Model:
         import torch
