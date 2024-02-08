@@ -15,11 +15,7 @@ from fal.toolkit.file import FileRepository
 from fal.toolkit.file.providers.gcp import GoogleStorageRepository
 from pydantic import BaseModel, Field
 
-from text_to_image.loras import (
-    determine_auxiliary_features,
-    identify_lora_weights,
-    stack_loras,
-)
+from text_to_image.loras import determine_auxiliary_features, identify_lora_weights
 
 DeviceType = Literal["cpu", "cuda"]
 
@@ -113,7 +109,7 @@ class GlobalRuntime:
             download_path = self.download_to(
                 lora_weight, LORA_WEIGHTS_DIR, extension="safetensors"
             )
-            return str(download_path.relative_to(LORA_WEIGHTS_DIR))
+            return str(download_path)
         return lora_weight
 
     def download_to(
@@ -175,49 +171,28 @@ class GlobalRuntime:
 
         return download_path
 
-    def load_lora_weight(self, lora_weight_path: str) -> dict[str, Any]:
-        lora_weight = self.download_lora_weight_if_needed(lora_weight_path)
-
-        try:
-            if lora_weight.endswith(".bin"):
-                # This only happens for the LoRas that were trained on our platform
-                # since HF's trainer script exports the weights in regular torch format.
-                import torch
-
-                state_dict = torch.load(LORA_WEIGHTS_DIR / lora_weight)
-            else:
-                from safetensors import torch
-
-                state_dict = torch.load_file(LORA_WEIGHTS_DIR / lora_weight)
-        except Exception as exc:
-            raise ValueError(
-                "Could not process the lora weights due to a safetensor serialization error."
-            ) from exc
-
-        # To avoid false positives, we'll start collecting information about LoRAs first
-        # and then convert this check into a proper warning.
-        self.check_lora_compatibility(lora_weight, state_dict)
-        return state_dict
-
     def merge_and_apply_loras(
         self,
         pipe: object,
         loras: list[LoraWeight],
-    ) -> float:
+    ):
         print(f"LoRAs: {loras}")
-        state_dicts = [self.load_lora_weight(lora_weight.path) for lora_weight in loras]
+        lora_paths = [
+            self.download_lora_weight_if_needed(lora_path) for lora_path in loras
+        ]
+        adapter_names = [
+            Path(lora_path).name.replace(".", "_") for lora_path in lora_paths
+        ]
         lora_scales = [lora_weight.scale for lora_weight in loras]
 
-        if len(loras) == 1:
-            [state_dict] = state_dicts
-            [global_scale] = lora_scales
-        else:
-            state_dict = stack_loras(state_dicts, lora_scales)
-            global_scale = 1.0
+        for lora_path, lora_scale, adapter_name in zip(
+            lora_paths, lora_scales, adapter_names
+        ):
+            print(f"Applying LoRA {lora_path} with scale {lora_scale}.")
+            pipe.load_lora_weights(lora_path, adapter_name=adapter_name)
 
-        pipe.load_lora_weights(state_dict)
+        pipe.set_adapters(adapter_names=adapter_names, adapter_weights=lora_scales)
         pipe.fuse_lora()
-        return global_scale
 
     def check_lora_compatibility(
         self, lora_name: str, state_dict: dict[str, Any]
@@ -272,7 +247,7 @@ class GlobalRuntime:
         clip_skip: int = 0,
         scheduler: str | None = None,
         model_architecture: str | None = None,
-    ) -> Iterator[tuple[object, float | None]]:
+    ) -> Iterator[object | None]:
         model_name = self.download_model_if_needed(model_name)
 
         if model_architecture is None:
@@ -297,15 +272,14 @@ class GlobalRuntime:
         with self.change_scheduler(pipe, scheduler):
             try:
                 if loras:
-                    global_scale = self.merge_and_apply_loras(pipe, loras)
-                else:
-                    global_scale = None
+                    self.merge_and_apply_loras(pipe, loras)
 
-                yield (pipe, global_scale)
+                yield pipe
             finally:
                 if loras:
                     try:
                         pipe.unfuse_lora()
+                        pipe.set_adapters(adapter_names=[])
                     except Exception:
                         print(
                             "Failed to unfuse LoRAs from the pipe, clearing it out of memory."

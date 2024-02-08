@@ -176,6 +176,7 @@ def wrap_excs():
         "invisible-watermark",
         "google-cloud-storage",
         "psutil",
+        "peft",
     ],
     machine_type="GPU",
     keep_alive=1800,
@@ -209,7 +210,7 @@ def generate_image(input: InputParameters) -> OutputParameters:
             clip_skip=input.clip_skip,
             scheduler=input.scheduler,
             model_architecture=input.model_architecture,
-        ) as (pipe, global_lora_scale):
+        ) as pipe:
             seed = input.seed or torch.seed()
             kwargs = {
                 "prompt": input.prompt,
@@ -224,11 +225,10 @@ def generate_image(input: InputParameters) -> OutputParameters:
                 kwargs["width"] = image_size.width
                 kwargs["height"] = image_size.height
 
-            if global_lora_scale is not None:
-                kwargs["cross_attention_kwargs"] = {"scale": global_lora_scale}
-
             print(f"Generating {input.num_images} images...")
             make_inference = partial(pipe, **kwargs)
+
+            print("Active adapters", pipe.get_active_adapters())
             result = session.execute_on_cuda(make_inference, ignored_models=[pipe])
 
             images = session.upload_images(result.images)
