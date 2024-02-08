@@ -175,9 +175,7 @@ class GlobalRuntime:
         loras: list[LoraWeight],
     ):
         print(f"LoRAs: {loras}")
-        lora_paths = [
-            self.download_lora_weight_if_needed(lora_path) for lora_path in loras
-        ]
+        lora_paths = [self.download_lora_weight_if_needed(lora.path) for lora in loras]
         adapter_names = [
             Path(lora_path).name.replace(".", "_") for lora_path in lora_paths
         ]

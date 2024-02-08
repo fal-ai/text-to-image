@@ -250,7 +250,7 @@ if __name__ == "__main__":
         num_images=4,
         scheduler="LCM",
     )
-    local = generate_image.on(serve=False)
+    local = generate_image.on(serve=False, keep_alive=0)
     output = local(input)
     for image in output.images:
         print(image.url)
