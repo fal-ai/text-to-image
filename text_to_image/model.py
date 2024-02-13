@@ -6,7 +6,7 @@ from fal import cached, function
 from fal.toolkit import Image, ImageSizeInput, get_image_size
 from pydantic import BaseModel, Field
 
-from text_to_image.runtime import SUPPORTED_SCHEDULERS, GlobalRuntime
+from text_to_image.runtime import SUPPORTED_SCHEDULERS, GlobalRuntime, filter_by
 
 
 @cached
@@ -137,6 +137,10 @@ class InputParameters(BaseModel):
         le=8,
         title="Number of images",
     )
+    enable_safety_checker: bool = Field(
+        default=False,
+        description="If set to true, the safety checker will be enabled.",
+    )
 
 
 class OutputParameters(BaseModel):
@@ -146,6 +150,9 @@ class OutputParameters(BaseModel):
             Seed of the generated Image. It will be the same value of the one passed in the
             input or the randomly generated that was used in case none was passed.
         """
+    )
+    has_nsfw_concepts: list[bool] = Field(
+        description="Whether the generated images contain NSFW concepts."
     )
 
 
@@ -181,7 +188,7 @@ def wrap_excs():
     machine_type="GPU",
     keep_alive=1800,
     serve=True,
-    max_concurrency=5,
+    max_concurrency=4,
     _scheduler="nomad",
     _scheduler_options={
         "preferred_dcs": [
@@ -231,11 +238,20 @@ def generate_image(input: InputParameters) -> OutputParameters:
             print("Active adapters", pipe.get_active_adapters())
             result = session.execute_on_cuda(make_inference, ignored_models=[pipe])
 
-            images = session.upload_images(result.images)
-            return OutputParameters(images=images, seed=seed)
+            has_nsfw_concepts = session.run_safety_checker(
+                images=result.images,
+                enable_safety_checker=input.enable_safety_checker,
+            )
+
+            images = session.upload_images(filter_by(has_nsfw_concepts, result.images))
+
+            return OutputParameters(
+                images=images, seed=seed, has_nsfw_concepts=has_nsfw_concepts
+            )
 
 
 if __name__ == "__main__":
+    generate_image.on(serve=True, keep_alive=0)()
     input = InputParameters(
         model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
         prompt="Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",

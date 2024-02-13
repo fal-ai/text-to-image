@@ -87,11 +87,27 @@ class GlobalRuntime:
     repository: str | FileRepository = "fal"
 
     def __post_init__(self):
+        import torch
+        from diffusers.pipelines.stable_diffusion.safety_checker import (
+            StableDiffusionSafetyChecker,
+        )
+        from transformers import AutoFeatureExtractor
+
         if os.getenv("GCLOUD_SA_JSON"):
             self.repository = GoogleStorageRepository(
                 url_expiration=2 * 24 * 60,  # 2 days, same as fal,
                 bucket_name=os.getenv("GCS_BUCKET_NAME", "fal_file_storage"),
             )
+
+        self.feature_extractor = AutoFeatureExtractor.from_pretrained(
+            "CompVis/stable-diffusion-safety-checker",
+            torch_dtype="float16",
+        )
+
+        self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
+            "CompVis/stable-diffusion-safety-checker",
+            torch_dtype=torch.float16,
+        ).to("cuda")
 
     def download_model_if_needed(self, model_name: str) -> str:
         CHECKPOINTS_DIR.mkdir(exist_ok=True, parents=True)
@@ -219,6 +235,9 @@ class GlobalRuntime:
 
             if hasattr(pipe, "watermark"):
                 pipe.watermark = None
+
+            if hasattr(pipe, "safety_checker"):
+                pipe.safety_checker = None
 
             self.models[model_key] = Model(pipe)
 
@@ -403,3 +422,39 @@ class GlobalRuntime:
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
+
+    def run_safety_checker(self, images: list[object], enable_safety_checker: bool):
+        if not enable_safety_checker:
+            return [False] * len(images)
+
+        import numpy as np
+        import torch
+
+        safety_checker_input = self.feature_extractor(images, return_tensors="pt").to(
+            "cuda"
+        )
+
+        np_image = [np.array(val) for val in images]
+
+        _, has_nsfw_concept = self.safety_checker(
+            images=np_image,
+            clip_input=safety_checker_input.pixel_values.to(torch.float16),
+        )
+
+        return has_nsfw_concept
+
+
+def filter_by(
+    has_nsfw_concepts: list[bool],
+    images: list[object],
+) -> list[object]:
+    from PIL import Image as PILImage
+
+    return [
+        (
+            PILImage.new("RGB", (image.width, image.height), (0, 0, 0))
+            if has_nsfw
+            else image
+        )
+        for image, has_nsfw in zip(images, has_nsfw_concepts)
+    ]
