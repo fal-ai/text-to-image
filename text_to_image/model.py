@@ -33,6 +33,18 @@ class LoraWeight(BaseModel):
     )
 
 
+class Embedding(BaseModel):
+    path: str = Field(
+        description="URL or the path to the embedding weights.",
+    )
+    tokens: list[str] = Field(
+        default=["<s0>", "<s1>"],
+        description="""
+            The tokens to map the embedding weights to. Use these tokens in your prompts.
+        """,
+    )
+
+
 class InputParameters(BaseModel):
     model_name: str = Field(
         description="URL or HuggingFace ID of the base model to generate the image.",
@@ -66,6 +78,13 @@ class InputParameters(BaseModel):
         description="""
             The LoRAs to use for the image generation. You can use any number of LoRAs
             and they will be merged together to generate the final image.
+        """,
+    )
+    embeddings: list[Embedding] = Field(
+        default_factory=list,
+        description="""
+            The embeddings to use for the image generation. Only a single embedding is supported at the moment.
+            The embeddings will be used to map the tokens in the prompt to the embedding weights.
         """,
     )
     seed: int | None = Field(
@@ -172,7 +191,7 @@ def wrap_excs():
 @function(
     "virtualenv",
     requirements=[
-        "diffusers==0.23.0",
+        "diffusers==0.27.2",
         "transformers",
         "accelerate",
         "torch>=2.1",
@@ -214,6 +233,7 @@ def generate_image(input: InputParameters) -> OutputParameters:
         with session.load_model(
             input.model_name,
             loras=input.loras,
+            embeddings=input.embeddings,
             clip_skip=input.clip_skip,
             scheduler=input.scheduler,
             model_architecture=input.model_architecture,
@@ -251,7 +271,7 @@ def generate_image(input: InputParameters) -> OutputParameters:
 
 
 if __name__ == "__main__":
-    generate_image.on(serve=True, keep_alive=0)()
+    # generate_image.on(serve=True, keep_alive=0)()
     input = InputParameters(
         model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
         prompt="Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
@@ -261,10 +281,16 @@ if __name__ == "__main__":
                 scale=1,
             )
         ],
+        embeddings=[
+            Embedding(
+                path="https://storage.googleapis.com/falserverless/style_lora/pimento_embeddings.pti",
+                tokens=["<s0>", "<s1>"],
+            )
+        ],
         guidance_scale=0,
         num_inference_steps=4,
         num_images=4,
-        scheduler="LCM",
+        # scheduler="LCM",
     )
     local = generate_image.on(serve=False, keep_alive=0)
     output = local(input)

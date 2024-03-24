@@ -10,15 +10,17 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
-from fal.toolkit import Image
+from fal.toolkit import Image, download_file
 from fal.toolkit.file import FileRepository
 from fal.toolkit.file.providers.gcp import GoogleStorageRepository
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 DeviceType = Literal["cpu", "cuda"]
 
 CHECKPOINTS_DIR = Path("/data/checkpoints")
 LORA_WEIGHTS_DIR = Path("/data/loras")
+EMBEDDINGS_DIR = Path("/data/embeddings")
 TEMP_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:21.0) Gecko/20100101 Firefox/21.0"
 )
@@ -77,6 +79,18 @@ class LoraWeight(BaseModel):
         """,
         ge=0.0,
         le=1.0,
+    )
+
+
+class Embedding(BaseModel):
+    path: str = Field(
+        description="URL or the path to the embedding weights.",
+    )
+    tokens: list[str] = Field(
+        default=["<s0>", "<s1>"],
+        description="""
+            The tokens to map the embedding weights to. Use these tokens in your prompts.
+        """,
     )
 
 
@@ -244,10 +258,101 @@ class GlobalRuntime:
         return self.models[model_key]
 
     @contextmanager
+    def add_embeddings(self, embeddings: list[Embedding], pipe, arch) -> Iterator[None]:
+        from safetensors.torch import load_file
+
+        if not embeddings:
+            yield
+            return
+        elif len(embeddings) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Only one embedding is supported at the moment.",
+            )
+
+        [embedding] = embeddings
+        try:
+            embedding_path = download_file(embedding.path, EMBEDDINGS_DIR)
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Failed to download embedding: {e}",
+            )
+
+        try:
+            embedding_state_dict = load_file(embedding_path)
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Failed to load LoRA weight: {e}",
+            )
+
+        textual_inversions = []
+
+        try:
+            print(embedding_state_dict.keys())
+
+            if "clip_l" in embedding_state_dict:
+                text_encoder_key = "clip_l"
+            elif "text_encoders_0" in embedding_state_dict:
+                text_encoder_key = "text_encoders_0"
+            elif "text_encoder" in embedding_state_dict:
+                text_encoder_key = "text_encoder"
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid embedding state dict. Needs to have a key that is either 'clip_l', 'text_encoders_0', or 'text_encoder'",
+                )
+
+            if arch == "sdxl":
+                if "clip_g" in embedding_state_dict:
+                    text_encoder_2_key = "clip_g"
+                elif "text_encoders_1" in embedding_state_dict:
+                    text_encoder_2_key = "text_encoders_1"
+                else:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Invalid embedding state dict. Needs to have a key that is either 'clip_g' or 'text_encoders_1'",
+                    )
+
+            if arch == "sdxl":
+                encoders = [
+                    (text_encoder_key, pipe.text_encoder, pipe.tokenizer),
+                    (text_encoder_2_key, pipe.text_encoder_2, pipe.tokenizer_2),
+                ]
+            else:
+                encoders = [
+                    (text_encoder_key, pipe.text_encoder, pipe.tokenizer),
+                ]
+
+            for te_key, text_encoder_ref, tokenizer in encoders:
+                if te_key in embedding_state_dict:
+                    print(
+                        f"Loading textual inversion for {te_key} with {embedding.tokens}"
+                    )
+                    textual_inversions.append(
+                        (embedding.tokens, text_encoder_ref, tokenizer)
+                    )
+                    pipe.load_textual_inversion(
+                        embedding_state_dict[te_key],
+                        token=embedding.tokens,
+                        text_encoder=text_encoder_ref,
+                        tokenizer=tokenizer,
+                    )
+
+            yield
+        finally:
+            for tokens, text_encoder, tokenizer in textual_inversions:
+                pipe.unload_textual_inversion(
+                    tokens=tokens, text_encoder=text_encoder, tokenizer=tokenizer
+                )
+
+    @contextmanager
     def load_model(
         self,
         model_name: str,
         loras: list[LoraWeight],
+        embeddings: list[Embedding],
         clip_skip: int = 0,
         scheduler: str | None = None,
         model_architecture: str | None = None,
@@ -274,24 +379,25 @@ class GlobalRuntime:
             print(f"Ignoring clip_skip={clip_skip} for now, it's not supported yet!")
 
         with self.change_scheduler(pipe, scheduler):
-            try:
-                if loras:
-                    self.merge_and_apply_loras(pipe, loras)
+            with self.add_embeddings(embeddings, pipe, arch):
+                try:
+                    if loras:
+                        self.merge_and_apply_loras(pipe, loras)
 
-                yield pipe
-            finally:
-                if loras:
-                    try:
-                        pipe.unfuse_lora()
-                        pipe.set_adapters(adapter_names=[])
-                    except Exception:
-                        print(
-                            "Failed to unfuse LoRAs from the pipe, clearing it out of memory."
-                        )
-                        traceback.print_exc()
-                        self.models.pop((model_name, arch), None)
-                    else:
-                        pipe.unload_lora_weights()
+                    yield pipe
+                finally:
+                    if loras:
+                        try:
+                            pipe.unfuse_lora()
+                            pipe.set_adapters(adapter_names=[])
+                        except Exception:
+                            print(
+                                "Failed to unfuse LoRAs from the pipe, clearing it out of memory."
+                            )
+                            traceback.print_exc()
+                            self.models.pop((model_name, arch), None)
+                        else:
+                            pipe.unload_lora_weights()
 
     @contextmanager
     def change_scheduler(
