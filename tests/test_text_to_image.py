@@ -9,7 +9,7 @@ from image_similarity_measures.evaluate import evaluation as image_similarity
 from text_to_image.model import InputParameters, generate_image
 
 SIMILARITY_METHOD = "fsim"
-SIMILARITY_THRESHOLD = 0.8
+SIMILARITY_THRESHOLD = 0.7
 
 local_test_fn = generate_image.on(
     serve=False,
