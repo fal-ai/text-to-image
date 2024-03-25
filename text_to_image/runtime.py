@@ -85,6 +85,9 @@ class LoraWeight(BaseModel):
 class Embedding(BaseModel):
     path: str = Field(
         description="URL or the path to the embedding weights.",
+        examples=[
+            "https://storage.googleapis.com/falserverless/style_lora/emb_our_test_1.safetensors",
+        ],
     )
     tokens: list[str] = Field(
         default=["<s0>", "<s1>"],
