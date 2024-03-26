@@ -15,6 +15,7 @@ from fal.toolkit.file import FileRepository
 from fal.toolkit.file.providers.gcp import GoogleStorageRepository
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
+from text_to_image.pipeline import create_pipeline
 
 DeviceType = Literal["cpu", "cuda"]
 
@@ -265,20 +266,17 @@ class GlobalRuntime:
 
     def get_model(self, model_name: str, arch: str) -> Model:
         import torch
-        from diffusers import (
-            DiffusionPipeline,
-            StableDiffusionControlNetPipeline,
-            StableDiffusionXLControlNetPipeline,
-        )
         from diffusers.pipelines.controlnet import MultiControlNetModel
 
+
+        regular_pipeline_cls, sdxl_pipeline_cls = create_pipeline()
+
         model_key = (model_name, arch)
-        temporary_controlnet = MultiControlNetModel([])
         if model_key not in self.models:
             if arch == "sdxl":
-                pipeline_cls = StableDiffusionXLControlNetPipeline
+                pipeline_cls = sdxl_pipeline_cls
             else:
-                pipeline_cls = StableDiffusionControlNetPipeline
+                pipeline_cls = regular_pipeline_cls
 
             if model_name.endswith(".ckpt") or model_name.endswith(".safetensors"):
                 pipe = pipeline_cls.from_single_file(
@@ -290,7 +288,7 @@ class GlobalRuntime:
                 pipe = pipeline_cls.from_pretrained(
                     model_name,
                     torch_dtype=torch.float16,
-                    controlnet=temporary_controlnet
+                    controlnet=MultiControlNetModel([])
                 )
 
             if hasattr(pipe, "watermark"):
@@ -360,6 +358,7 @@ class GlobalRuntime:
             )
 
         print("adding controlnets to the pipe, controlnet_models len", len(controlnet_models))
+
         pipe.controlnet = MultiControlNetModel(controlnet_models)
 
         yield

@@ -327,6 +327,7 @@ def generate_image(input: InputParameters) -> OutputParameters:
                 kwargs["image"] = controlnet_images
 
 
+
             print(f"Generating {input.num_images} images...")
             make_inference = partial(pipe, **kwargs)
 
@@ -350,7 +351,8 @@ def generate_image(input: InputParameters) -> OutputParameters:
 if __name__ == "__main__":
     # generate_image.on(serve=True, keep_alive=0)()
     input = InputParameters(
-        model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
+        # model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
+        model_name="SG161222/Realistic_Vision_V2.0",
         prompt="Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
         # loras=[
         #     LoraWeight(
@@ -366,7 +368,8 @@ if __name__ == "__main__":
         # ],
         controlnets=[
             ControlNet(
-                path="diffusers/controlnet-canny-sdxl-1.0",
+                # path="diffusers/controlnet-canny-sdxl-1.0",
+                path = "lllyasviel/sd-controlnet-canny",
                 image_url="https://storage.googleapis.com/falserverless/model_tests/controlnet_sdxl/canny-edge.resized.jpg",
                 conditioning_scale=1.0,
                 start_percentage=0.0,
@@ -376,7 +379,8 @@ if __name__ == "__main__":
         guidance_scale=7.5,
         num_inference_steps=20,
         num_images=1,
-        seed=42
+        seed=42,
+        model_architecture="sd",
         # scheduler="LCM",
     )
     local = generate_image.on(serve=False, keep_alive=0)
