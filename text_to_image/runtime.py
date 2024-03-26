@@ -16,11 +16,14 @@ from fal.toolkit.file.providers.gcp import GoogleStorageRepository
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from text_to_image.pipeline import create_pipeline
+
 DeviceType = Literal["cpu", "cuda"]
 
 CHECKPOINTS_DIR = Path("/data/checkpoints")
 LORA_WEIGHTS_DIR = Path("/data/loras")
 EMBEDDINGS_DIR = Path("/data/embeddings")
+IMAGE_DIR = Path("/data/images")
 TEMP_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:21.0) Gecko/20100101 Firefox/21.0"
 )
@@ -94,6 +97,46 @@ class Embedding(BaseModel):
         description="""
             The tokens to map the embedding weights to. Use these tokens in your prompts.
         """,
+    )
+
+
+class ControlNet(BaseModel):
+    path: str = Field(
+        description="URL or the path to the control net weights.",
+        examples=[
+            "https://civitai.com/api/download/models/135931",
+        ],
+    )
+    image_url: str = Field(
+        description="URL of the image to be used as the control net.",
+        examples=[
+            "https://example.com/image.jpg",
+        ],
+    )
+    conditioning_scale: float = Field(
+        default=1.0,
+        description="""
+            The scale of the control net weight. This is used to scale the control net weight
+            before merging it with the base model.
+        """,
+        ge=0.0,
+        le=2.0,
+    )
+    start_percentage: float = Field(
+        default=0.0,
+        description="""
+            The percentage of the image to start applying the controlnet in terms of the total timesteps.
+        """,
+        ge=0.0,
+        le=1.0,
+    )
+    end_percentage: float = Field(
+        default=1.0,
+        description="""
+            The percentage of the image to end applying the controlnet in terms of the total timesteps.
+        """,
+        ge=0.0,
+        le=1.0,
     )
 
 
@@ -225,29 +268,28 @@ class GlobalRuntime:
 
     def get_model(self, model_name: str, arch: str) -> Model:
         import torch
-        from diffusers import (
-            DiffusionPipeline,
-            StableDiffusionPipeline,
-            StableDiffusionXLPipeline,
-        )
+        from diffusers.pipelines.controlnet import MultiControlNetModel
+
+        regular_pipeline_cls, sdxl_pipeline_cls = create_pipeline()
 
         model_key = (model_name, arch)
         if model_key not in self.models:
-            if model_name.endswith(".ckpt") or model_name.endswith(".safetensors"):
-                if arch == "sdxl":
-                    pipeline_cls = StableDiffusionXLPipeline
-                else:
-                    pipeline_cls = StableDiffusionPipeline
+            if arch == "sdxl":
+                pipeline_cls = sdxl_pipeline_cls
+            else:
+                pipeline_cls = regular_pipeline_cls
 
+            if model_name.endswith(".ckpt") or model_name.endswith(".safetensors"):
                 pipe = pipeline_cls.from_single_file(
                     model_name,
                     torch_dtype=torch.float16,
                     local_files_only=True,
                 )
             else:
-                pipe = DiffusionPipeline.from_pretrained(
+                pipe = pipeline_cls.from_pretrained(
                     model_name,
                     torch_dtype=torch.float16,
+                    controlnet=MultiControlNetModel([]),
                 )
 
             if hasattr(pipe, "watermark"):
@@ -261,6 +303,70 @@ class GlobalRuntime:
         return self.models[model_key]
 
     @contextmanager
+    def add_controlnets(self, controlnets: list[ControlNet], pipe) -> Iterator[None]:
+        import torch
+        from diffusers import ControlNetModel
+        from diffusers.pipelines.controlnet import MultiControlNetModel
+
+        if not controlnets:
+            yield
+            return
+
+        controlnet_paths = []
+        for controlnet in controlnets:
+            try:
+                # see if you can parse the controlnet path as a URL
+                if controlnet.path.startswith("http://") or controlnet.path.startswith(
+                    "https://"
+                ):
+                    print("Assuming controlnet path is a URL")
+                    controlnet_path = self.download_to(
+                        controlnet.path, CHECKPOINTS_DIR, extension="safetensors"
+                    )
+                    controlnet_paths.append(Path(controlnet_path))
+                else:
+                    print("Assuming controlnet path is a huggingface model")
+                    controlnet_paths.append(controlnet.path)  # type: ignore
+            except Exception as e:
+                raise HTTPException(
+                    422,
+                    detail=f"Failed to download controlnet: {e}",
+                )
+
+        controlnet_models = []
+        try:
+            for controlnet_path in controlnet_paths:
+                if isinstance(controlnet_path, Path):
+                    print("Loading controlnet from path", controlnet_path)
+                    controlnet_model = ControlNetModel.from_single_file(
+                        controlnet_path,
+                        torch_dtype=torch.float16,
+                    )
+                else:
+                    print("loading from huggingface model", controlnet_path)
+                    controlnet_model = ControlNetModel.from_pretrained(
+                        controlnet_path,
+                        torch_dtype=torch.float16,
+                    )
+
+                controlnet_models.append(controlnet_model.to("cuda"))
+        except Exception as e:
+            print(e)
+            raise HTTPException(
+                422,
+                detail=f"Failed to load controlnet: {e}",
+            )
+
+        print(
+            "adding controlnets to the pipe, controlnet_models len",
+            len(controlnet_models),
+        )
+
+        pipe.controlnet = MultiControlNetModel(controlnet_models)
+
+        yield
+
+    @contextmanager
     def add_embeddings(self, embeddings: list[Embedding], pipe, arch) -> Iterator[None]:
         from safetensors.torch import load_file
 
@@ -269,7 +375,7 @@ class GlobalRuntime:
             return
         elif len(embeddings) > 1:
             raise HTTPException(
-                status_code=422,
+                422,
                 detail="Only one embedding is supported at the moment.",
             )
 
@@ -278,7 +384,7 @@ class GlobalRuntime:
             embedding_path = download_file(embedding.path, EMBEDDINGS_DIR)
         except Exception as e:
             raise HTTPException(
-                status_code=422,
+                422,
                 detail=f"Failed to download embedding: {e}",
             )
 
@@ -286,7 +392,7 @@ class GlobalRuntime:
             embedding_state_dict = load_file(embedding_path)
         except Exception as e:
             raise HTTPException(
-                status_code=422,
+                422,
                 detail=f"Failed to load LoRA weight: {e}",
             )
 
@@ -303,7 +409,7 @@ class GlobalRuntime:
                 text_encoder_key = "text_encoder"
             else:
                 raise HTTPException(
-                    status_code=422,
+                    422,
                     detail="Invalid embedding state dict. Needs to have a key that is either 'clip_l', 'text_encoders_0', or 'text_encoder'",
                 )
 
@@ -314,7 +420,7 @@ class GlobalRuntime:
                     text_encoder_2_key = "text_encoders_1"
                 else:
                     raise HTTPException(
-                        status_code=422,
+                        422,
                         detail="Invalid embedding state dict. Needs to have a key that is either 'clip_g' or 'text_encoders_1'",
                     )
 
@@ -356,6 +462,7 @@ class GlobalRuntime:
         model_name: str,
         loras: list[LoraWeight],
         embeddings: list[Embedding],
+        controlnets: list[ControlNet],
         clip_skip: int = 0,
         scheduler: str | None = None,
         model_architecture: str | None = None,
@@ -383,24 +490,25 @@ class GlobalRuntime:
 
         with self.change_scheduler(pipe, scheduler):
             with self.add_embeddings(embeddings, pipe, arch):
-                try:
-                    if loras:
-                        self.merge_and_apply_loras(pipe, loras)
+                with self.add_controlnets(controlnets, pipe):
+                    try:
+                        if loras:
+                            self.merge_and_apply_loras(pipe, loras)
 
-                    yield pipe
-                finally:
-                    if loras:
-                        try:
-                            pipe.unfuse_lora()
-                            pipe.set_adapters(adapter_names=[])
-                        except Exception:
-                            print(
-                                "Failed to unfuse LoRAs from the pipe, clearing it out of memory."
-                            )
-                            traceback.print_exc()
-                            self.models.pop((model_name, arch), None)
-                        else:
-                            pipe.unload_lora_weights()
+                        yield pipe
+                    finally:
+                        if loras:
+                            try:
+                                pipe.unfuse_lora()
+                                pipe.set_adapters(adapter_names=[])
+                            except Exception:
+                                print(
+                                    "Failed to unfuse LoRAs from the pipe, clearing it out of memory."
+                                )
+                                traceback.print_exc()
+                                self.models.pop((model_name, arch), None)
+                            else:
+                                pipe.unload_lora_weights()
 
     @contextmanager
     def change_scheduler(
