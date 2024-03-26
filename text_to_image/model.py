@@ -352,8 +352,8 @@ def generate_image(input: InputParameters) -> OutputParameters:
 if __name__ == "__main__":
     # generate_image.on(serve=True, keep_alive=0)()
     input = InputParameters(
-        # model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
-        model_name="SG161222/Realistic_Vision_V2.0",
+        model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
+        # model_name="SG161222/Realistic_Vision_V2.0",
         # model_name="runwayml/stable-diffusion-v1-5",
         prompt="Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
         # loras=[
@@ -370,8 +370,8 @@ if __name__ == "__main__":
         # ],
         controlnets=[
             ControlNet(
-                # path="diffusers/controlnet-canny-sdxl-1.0",
-                path = "lllyasviel/sd-controlnet-canny",
+                path="diffusers/controlnet-canny-sdxl-1.0",
+                # path = "lllyasviel/sd-controlnet-canny",
                 image_url="https://storage.googleapis.com/falserverless/model_tests/controlnet_sdxl/canny-edge.resized.jpg",
                 conditioning_scale=1.0,
                 start_percentage=0.0,
@@ -382,9 +382,9 @@ if __name__ == "__main__":
         num_inference_steps=20,
         num_images=1,
         seed=42,
-        model_architecture="sd",
+        model_architecture="sdxl",
         scheduler="Euler A",
-        image_size=ImageSize(width=512, height=512)
+        image_size=ImageSize(width=1024, height=1024)
         # scheduler="LCM",
     )
     local = generate_image.on(serve=False, keep_alive=0)
