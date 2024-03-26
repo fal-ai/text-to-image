@@ -15,6 +15,7 @@ from fal.toolkit.file import FileRepository
 from fal.toolkit.file.providers.gcp import GoogleStorageRepository
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
+
 from text_to_image.pipeline import create_pipeline
 
 DeviceType = Literal["cpu", "cuda"]
@@ -137,6 +138,7 @@ class ControlNet(BaseModel):
         ge=0.0,
         le=1.0,
     )
+
 
 @dataclass
 class GlobalRuntime:
@@ -268,7 +270,6 @@ class GlobalRuntime:
         import torch
         from diffusers.pipelines.controlnet import MultiControlNetModel
 
-
         regular_pipeline_cls, sdxl_pipeline_cls = create_pipeline()
 
         model_key = (model_name, arch)
@@ -288,7 +289,7 @@ class GlobalRuntime:
                 pipe = pipeline_cls.from_pretrained(
                     model_name,
                     torch_dtype=torch.float16,
-                    controlnet=MultiControlNetModel([])
+                    controlnet=MultiControlNetModel([]),
                 )
 
             if hasattr(pipe, "watermark"):
@@ -303,10 +304,9 @@ class GlobalRuntime:
 
     @contextmanager
     def add_controlnets(self, controlnets: list[ControlNet], pipe) -> Iterator[None]:
-        from safetensors.torch import load_file
+        import torch
         from diffusers import ControlNetModel
         from diffusers.pipelines.controlnet import MultiControlNetModel
-        import torch
 
         if not controlnets:
             yield
@@ -326,7 +326,7 @@ class GlobalRuntime:
                     controlnet_paths.append(Path(controlnet_path))
                 else:
                     print("Assuming controlnet path is a huggingface model")
-                    controlnet_paths.append(controlnet.path)
+                    controlnet_paths.append(controlnet.path)  # type: ignore
             except Exception as e:
                 raise HTTPException(
                     422,
@@ -357,7 +357,10 @@ class GlobalRuntime:
                 detail=f"Failed to load controlnet: {e}",
             )
 
-        print("adding controlnets to the pipe, controlnet_models len", len(controlnet_models))
+        print(
+            "adding controlnets to the pipe, controlnet_models len",
+            len(controlnet_models),
+        )
 
         pipe.controlnet = MultiControlNetModel(controlnet_models)
 

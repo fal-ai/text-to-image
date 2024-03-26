@@ -3,11 +3,16 @@ from functools import partial
 from typing import Literal
 
 from fal import cached, function
-from fal.toolkit import Image, ImageSizeInput, get_image_size, download_file
+from fal.toolkit import Image, ImageSizeInput, download_file, get_image_size
 from fal.toolkit.image import ImageSize
 from pydantic import BaseModel, Field
 
-from text_to_image.runtime import IMAGE_DIR, SUPPORTED_SCHEDULERS, GlobalRuntime, filter_by
+from text_to_image.runtime import (
+    IMAGE_DIR,
+    SUPPORTED_SCHEDULERS,
+    GlobalRuntime,
+    filter_by,
+)
 
 
 @cached
@@ -142,7 +147,7 @@ class InputParameters(BaseModel):
         default=False,
         description="""
             If set to true, the controlnet will be applied to only the conditional predictions.
-        """
+        """,
     )
     seed: int | None = Field(
         default=None,
@@ -278,8 +283,8 @@ def generate_image(input: InputParameters) -> OutputParameters:
     A single API for text-to-image, built on [fal](https://fal.ai) that supports
     all Stable Diffusion variants, checkpoints and LoRAs from HuggingFace (🤗) and CivitAI.
     """
-    import torch
     import PIL
+    import torch
 
     session = load_session()
 
@@ -314,20 +319,26 @@ def generate_image(input: InputParameters) -> OutputParameters:
 
             if input.controlnets:
                 kwargs["controlnet_guess_mode"] = input.controlnet_guess_mode
-                kwargs["controlnet_conditioning_scale"] = [x.conditioning_scale for x in input.controlnets]
-                kwargs["control_guidance_start"] = [x.start_percentage for x in input.controlnets]
-                kwargs["control_guidance_end"] = [x.end_percentage for x in input.controlnets]
+                kwargs["controlnet_conditioning_scale"] = [
+                    x.conditioning_scale for x in input.controlnets
+                ]
+                kwargs["control_guidance_start"] = [
+                    x.start_percentage for x in input.controlnets
+                ]
+                kwargs["control_guidance_end"] = [
+                    x.end_percentage for x in input.controlnets
+                ]
 
                 # download all the controlnet images
                 controlnet_images = []
                 for controlnet in input.controlnets:
-                    controlnet_image_path = download_file(controlnet.image_url, IMAGE_DIR)
+                    controlnet_image_path = download_file(
+                        controlnet.image_url, IMAGE_DIR
+                    )
                     controlnet_image = PIL.Image.open(controlnet_image_path)
                     controlnet_images.append(controlnet_image)
 
                 kwargs["image"] = controlnet_images
-
-
 
             print(f"Generating {input.num_images} images...")
             make_inference = partial(pipe, **kwargs)

@@ -1,3 +1,4 @@
+# type: ignore
 # Copyright 2024 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,34 +13,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 def create_pipeline():
     import inspect
-    from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+    from collections.abc import Callable
+    from typing import Any
 
     import numpy as np
     import PIL.Image
     import torch
     import torch.nn.functional as F
-    from transformers import (
-        CLIPImageProcessor,
-        CLIPTextModel,
-        CLIPTextModelWithProjection,
-        CLIPTokenizer,
-        CLIPVisionModelWithProjection,
-    )
-
-    from diffusers.utils.import_utils import is_invisible_watermark_available
-
     from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
     from diffusers.loaders import (
         FromSingleFileMixin,
         IPAdapterMixin,
-        StableDiffusionXLLoraLoaderMixin,
         LoraLoaderMixin,
+        StableDiffusionXLLoraLoaderMixin,
         TextualInversionLoaderMixin,
     )
-    from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
-    from diffusers.models import AutoencoderKL, ControlNetModel, ImageProjection, UNet2DConditionModel
+    from diffusers.models import (
+        AutoencoderKL,
+        ControlNetModel,
+        ImageProjection,
+        UNet2DConditionModel,
+    )
     from diffusers.models.attention_processor import (
         AttnProcessor2_0,
         LoRAAttnProcessor2_0,
@@ -47,6 +44,19 @@ def create_pipeline():
         XFormersAttnProcessor,
     )
     from diffusers.models.lora import adjust_lora_scale_text_encoder
+    from diffusers.pipelines.pipeline_utils import (
+        DiffusionPipeline,
+        StableDiffusionMixin,
+    )
+    from diffusers.pipelines.stable_diffusion.pipeline_output import (
+        StableDiffusionPipelineOutput,
+    )
+    from diffusers.pipelines.stable_diffusion.safety_checker import (
+        StableDiffusionSafetyChecker,
+    )
+    from diffusers.pipelines.stable_diffusion_xl.pipeline_output import (
+        StableDiffusionXLPipelineOutput,
+    )
     from diffusers.schedulers import KarrasDiffusionSchedulers
     from diffusers.utils import (
         USE_PEFT_BACKEND,
@@ -56,20 +66,28 @@ def create_pipeline():
         scale_lora_layers,
         unscale_lora_layers,
     )
-    from diffusers.utils.torch_utils import is_compiled_module, is_torch_version, randn_tensor
-    from diffusers.pipelines.pipeline_utils import DiffusionPipeline, StableDiffusionMixin
-    from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
-    from diffusers.pipelines.stable_diffusion.pipeline_output import StableDiffusionPipelineOutput
-
+    from diffusers.utils.import_utils import is_invisible_watermark_available
+    from diffusers.utils.torch_utils import (
+        is_compiled_module,
+        is_torch_version,
+        randn_tensor,
+    )
+    from transformers import (
+        CLIPImageProcessor,
+        CLIPTextModel,
+        CLIPTextModelWithProjection,
+        CLIPTokenizer,
+        CLIPVisionModelWithProjection,
+    )
 
     if is_invisible_watermark_available():
-        from diffusers.pipelines.stable_diffusion_xl.watermark import StableDiffusionXLWatermarker
+        from diffusers.pipelines.stable_diffusion_xl.watermark import (
+            StableDiffusionXLWatermarker,
+        )
 
     from diffusers.pipelines.controlnet.multicontrolnet import MultiControlNetModel
 
-
     logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
 
     EXAMPLE_DOC_STRING = """
         Examples:
@@ -115,7 +133,6 @@ def create_pipeline():
             ... ).images[0]
             ```
     """
-
 
     class StableDiffusionXLControlNetPipeline(
         DiffusionPipeline,
@@ -188,10 +205,13 @@ def create_pipeline():
             tokenizer: CLIPTokenizer,
             tokenizer_2: CLIPTokenizer,
             unet: UNet2DConditionModel,
-            controlnet: Union[ControlNetModel, List[ControlNetModel], Tuple[ControlNetModel], MultiControlNetModel],
+            controlnet: ControlNetModel
+            | list[ControlNetModel]
+            | tuple[ControlNetModel]
+            | MultiControlNetModel,
             scheduler: KarrasDiffusionSchedulers,
             force_zeros_for_empty_prompt: bool = True,
-            add_watermarker: Optional[bool] = None,
+            add_watermarker: bool | None = None,
             feature_extractor: CLIPImageProcessor = None,
             image_encoder: CLIPVisionModelWithProjection = None,
         ):
@@ -213,35 +233,45 @@ def create_pipeline():
                 image_encoder=image_encoder,
             )
             self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-            self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True)
-            self.control_image_processor = VaeImageProcessor(
-                vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True, do_normalize=False
+            self.image_processor = VaeImageProcessor(
+                vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
             )
-            add_watermarker = add_watermarker if add_watermarker is not None else is_invisible_watermark_available()
+            self.control_image_processor = VaeImageProcessor(
+                vae_scale_factor=self.vae_scale_factor,
+                do_convert_rgb=True,
+                do_normalize=False,
+            )
+            add_watermarker = (
+                add_watermarker
+                if add_watermarker is not None
+                else is_invisible_watermark_available()
+            )
 
             if add_watermarker:
                 self.watermark = StableDiffusionXLWatermarker()
             else:
                 self.watermark = None
 
-            self.register_to_config(force_zeros_for_empty_prompt=force_zeros_for_empty_prompt)
+            self.register_to_config(
+                force_zeros_for_empty_prompt=force_zeros_for_empty_prompt
+            )
 
         # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline.encode_prompt
         def encode_prompt(
             self,
             prompt: str,
-            prompt_2: Optional[str] = None,
-            device: Optional[torch.device] = None,
+            prompt_2: str | None = None,
+            device: torch.device | None = None,
             num_images_per_prompt: int = 1,
             do_classifier_free_guidance: bool = True,
-            negative_prompt: Optional[str] = None,
-            negative_prompt_2: Optional[str] = None,
-            prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-            pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-            lora_scale: Optional[float] = None,
-            clip_skip: Optional[int] = None,
+            negative_prompt: str | None = None,
+            negative_prompt_2: str | None = None,
+            prompt_embeds: torch.FloatTensor | None = None,
+            negative_prompt_embeds: torch.FloatTensor | None = None,
+            pooled_prompt_embeds: torch.FloatTensor | None = None,
+            negative_pooled_prompt_embeds: torch.FloatTensor | None = None,
+            lora_scale: float | None = None,
+            clip_skip: int | None = None,
         ):
             r"""
             Encodes the prompt into text encoder hidden states.
@@ -289,7 +319,9 @@ def create_pipeline():
 
             # set lora scale so that monkey patched LoRA
             # function of text encoder can correctly access it
-            if lora_scale is not None and isinstance(self, StableDiffusionXLLoraLoaderMixin):
+            if lora_scale is not None and isinstance(
+                self, StableDiffusionXLLoraLoaderMixin
+            ):
                 self._lora_scale = lora_scale
 
                 # dynamically adjust the LoRA scale
@@ -313,9 +345,15 @@ def create_pipeline():
                 batch_size = prompt_embeds.shape[0]
 
             # Define tokenizers and text encoders
-            tokenizers = [self.tokenizer, self.tokenizer_2] if self.tokenizer is not None else [self.tokenizer_2]
+            tokenizers = (
+                [self.tokenizer, self.tokenizer_2]
+                if self.tokenizer is not None
+                else [self.tokenizer_2]
+            )
             text_encoders = (
-                [self.text_encoder, self.text_encoder_2] if self.text_encoder is not None else [self.text_encoder_2]
+                [self.text_encoder, self.text_encoder_2]
+                if self.text_encoder is not None
+                else [self.text_encoder_2]
             )
 
             if prompt_embeds is None:
@@ -325,7 +363,9 @@ def create_pipeline():
                 # textual inversion: process multi-vector tokens if necessary
                 prompt_embeds_list = []
                 prompts = [prompt, prompt_2]
-                for prompt, tokenizer, text_encoder in zip(prompts, tokenizers, text_encoders):
+                for prompt, tokenizer, text_encoder in zip(
+                    prompts, tokenizers, text_encoders
+                ):
                     if isinstance(self, TextualInversionLoaderMixin):
                         prompt = self.maybe_convert_prompt(prompt, tokenizer)
 
@@ -338,18 +378,24 @@ def create_pipeline():
                     )
 
                     text_input_ids = text_inputs.input_ids
-                    untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+                    untruncated_ids = tokenizer(
+                        prompt, padding="longest", return_tensors="pt"
+                    ).input_ids
 
-                    if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-                        text_input_ids, untruncated_ids
-                    ):
-                        removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
+                    if untruncated_ids.shape[-1] >= text_input_ids.shape[
+                        -1
+                    ] and not torch.equal(text_input_ids, untruncated_ids):
+                        removed_text = tokenizer.batch_decode(
+                            untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
+                        )
                         logger.warning(
                             "The following part of your input was truncated because CLIP can only handle sequences up to"
                             f" {tokenizer.model_max_length} tokens: {removed_text}"
                         )
 
-                    prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
+                    prompt_embeds = text_encoder(
+                        text_input_ids.to(device), output_hidden_states=True
+                    )
 
                     # We are only ALWAYS interested in the pooled output of the final text encoder
                     pooled_prompt_embeds = prompt_embeds[0]
@@ -364,8 +410,14 @@ def create_pipeline():
                 prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
 
             # get unconditional embeddings for classifier free guidance
-            zero_out_negative_prompt = negative_prompt is None and self.config.force_zeros_for_empty_prompt
-            if do_classifier_free_guidance and negative_prompt_embeds is None and zero_out_negative_prompt:
+            zero_out_negative_prompt = (
+                negative_prompt is None and self.config.force_zeros_for_empty_prompt
+            )
+            if (
+                do_classifier_free_guidance
+                and negative_prompt_embeds is None
+                and zero_out_negative_prompt
+            ):
                 negative_prompt_embeds = torch.zeros_like(prompt_embeds)
                 negative_pooled_prompt_embeds = torch.zeros_like(pooled_prompt_embeds)
             elif do_classifier_free_guidance and negative_prompt_embeds is None:
@@ -373,12 +425,18 @@ def create_pipeline():
                 negative_prompt_2 = negative_prompt_2 or negative_prompt
 
                 # normalize str to list
-                negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
+                negative_prompt = (
+                    batch_size * [negative_prompt]
+                    if isinstance(negative_prompt, str)
+                    else negative_prompt
+                )
                 negative_prompt_2 = (
-                    batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
+                    batch_size * [negative_prompt_2]
+                    if isinstance(negative_prompt_2, str)
+                    else negative_prompt_2
                 )
 
-                uncond_tokens: List[str]
+                uncond_tokens: list[str]
                 if prompt is not None and type(prompt) is not type(negative_prompt):
                     raise TypeError(
                         f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
@@ -394,9 +452,13 @@ def create_pipeline():
                     uncond_tokens = [negative_prompt, negative_prompt_2]
 
                 negative_prompt_embeds_list = []
-                for negative_prompt, tokenizer, text_encoder in zip(uncond_tokens, tokenizers, text_encoders):
+                for negative_prompt, tokenizer, text_encoder in zip(
+                    uncond_tokens, tokenizers, text_encoders
+                ):
                     if isinstance(self, TextualInversionLoaderMixin):
-                        negative_prompt = self.maybe_convert_prompt(negative_prompt, tokenizer)
+                        negative_prompt = self.maybe_convert_prompt(
+                            negative_prompt, tokenizer
+                        )
 
                     max_length = prompt_embeds.shape[1]
                     uncond_input = tokenizer(
@@ -417,52 +479,79 @@ def create_pipeline():
 
                     negative_prompt_embeds_list.append(negative_prompt_embeds)
 
-                negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
+                negative_prompt_embeds = torch.concat(
+                    negative_prompt_embeds_list, dim=-1
+                )
 
             if self.text_encoder_2 is not None:
-                prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
+                prompt_embeds = prompt_embeds.to(
+                    dtype=self.text_encoder_2.dtype, device=device
+                )
             else:
                 prompt_embeds = prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
             bs_embed, seq_len, _ = prompt_embeds.shape
             # duplicate text embeddings for each generation per prompt, using mps friendly method
             prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-            prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
+            prompt_embeds = prompt_embeds.view(
+                bs_embed * num_images_per_prompt, seq_len, -1
+            )
 
             if do_classifier_free_guidance:
                 # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
                 seq_len = negative_prompt_embeds.shape[1]
 
                 if self.text_encoder_2 is not None:
-                    negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
+                    negative_prompt_embeds = negative_prompt_embeds.to(
+                        dtype=self.text_encoder_2.dtype, device=device
+                    )
                 else:
-                    negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.unet.dtype, device=device)
+                    negative_prompt_embeds = negative_prompt_embeds.to(
+                        dtype=self.unet.dtype, device=device
+                    )
 
-                negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
-                negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
-
-            pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
-                bs_embed * num_images_per_prompt, -1
-            )
-            if do_classifier_free_guidance:
-                negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
-                    bs_embed * num_images_per_prompt, -1
+                negative_prompt_embeds = negative_prompt_embeds.repeat(
+                    1, num_images_per_prompt, 1
+                )
+                negative_prompt_embeds = negative_prompt_embeds.view(
+                    batch_size * num_images_per_prompt, seq_len, -1
                 )
 
+            pooled_prompt_embeds = pooled_prompt_embeds.repeat(
+                1, num_images_per_prompt
+            ).view(bs_embed * num_images_per_prompt, -1)
+            if do_classifier_free_guidance:
+                negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(
+                    1, num_images_per_prompt
+                ).view(bs_embed * num_images_per_prompt, -1)
+
             if self.text_encoder is not None:
-                if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
+                if (
+                    isinstance(self, StableDiffusionXLLoraLoaderMixin)
+                    and USE_PEFT_BACKEND
+                ):
                     # Retrieve the original scale by scaling back the LoRA layers
                     unscale_lora_layers(self.text_encoder, lora_scale)
 
             if self.text_encoder_2 is not None:
-                if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
+                if (
+                    isinstance(self, StableDiffusionXLLoraLoaderMixin)
+                    and USE_PEFT_BACKEND
+                ):
                     # Retrieve the original scale by scaling back the LoRA layers
                     unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-            return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
+            return (
+                prompt_embeds,
+                negative_prompt_embeds,
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            )
 
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_image
-        def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
+        def encode_image(
+            self, image, device, num_images_per_prompt, output_hidden_states=None
+        ):
             dtype = next(self.image_encoder.parameters()).dtype
 
             if not isinstance(image, torch.Tensor):
@@ -470,31 +559,46 @@ def create_pipeline():
 
             image = image.to(device=device, dtype=dtype)
             if output_hidden_states:
-                image_enc_hidden_states = self.image_encoder(image, output_hidden_states=True).hidden_states[-2]
-                image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
+                image_enc_hidden_states = self.image_encoder(
+                    image, output_hidden_states=True
+                ).hidden_states[-2]
+                image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(
+                    num_images_per_prompt, dim=0
+                )
                 uncond_image_enc_hidden_states = self.image_encoder(
                     torch.zeros_like(image), output_hidden_states=True
                 ).hidden_states[-2]
-                uncond_image_enc_hidden_states = uncond_image_enc_hidden_states.repeat_interleave(
-                    num_images_per_prompt, dim=0
+                uncond_image_enc_hidden_states = (
+                    uncond_image_enc_hidden_states.repeat_interleave(
+                        num_images_per_prompt, dim=0
+                    )
                 )
                 return image_enc_hidden_states, uncond_image_enc_hidden_states
             else:
                 image_embeds = self.image_encoder(image).image_embeds
-                image_embeds = image_embeds.repeat_interleave(num_images_per_prompt, dim=0)
+                image_embeds = image_embeds.repeat_interleave(
+                    num_images_per_prompt, dim=0
+                )
                 uncond_image_embeds = torch.zeros_like(image_embeds)
 
                 return image_embeds, uncond_image_embeds
 
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_ip_adapter_image_embeds
         def prepare_ip_adapter_image_embeds(
-            self, ip_adapter_image, ip_adapter_image_embeds, device, num_images_per_prompt, do_classifier_free_guidance
+            self,
+            ip_adapter_image,
+            ip_adapter_image_embeds,
+            device,
+            num_images_per_prompt,
+            do_classifier_free_guidance,
         ):
             if ip_adapter_image_embeds is None:
                 if not isinstance(ip_adapter_image, list):
                     ip_adapter_image = [ip_adapter_image]
 
-                if len(ip_adapter_image) != len(self.unet.encoder_hid_proj.image_projection_layers):
+                if len(ip_adapter_image) != len(
+                    self.unet.encoder_hid_proj.image_projection_layers
+                ):
                     raise ValueError(
                         f"`ip_adapter_image` must have same length as the number of IP Adapters. Got {len(ip_adapter_image)} images and {len(self.unet.encoder_hid_proj.image_projection_layers)} IP Adapters."
                     )
@@ -503,17 +607,26 @@ def create_pipeline():
                 for single_ip_adapter_image, image_proj_layer in zip(
                     ip_adapter_image, self.unet.encoder_hid_proj.image_projection_layers
                 ):
-                    output_hidden_state = not isinstance(image_proj_layer, ImageProjection)
-                    single_image_embeds, single_negative_image_embeds = self.encode_image(
+                    output_hidden_state = not isinstance(
+                        image_proj_layer, ImageProjection
+                    )
+                    (
+                        single_image_embeds,
+                        single_negative_image_embeds,
+                    ) = self.encode_image(
                         single_ip_adapter_image, device, 1, output_hidden_state
                     )
-                    single_image_embeds = torch.stack([single_image_embeds] * num_images_per_prompt, dim=0)
+                    single_image_embeds = torch.stack(
+                        [single_image_embeds] * num_images_per_prompt, dim=0
+                    )
                     single_negative_image_embeds = torch.stack(
                         [single_negative_image_embeds] * num_images_per_prompt, dim=0
                     )
 
                     if do_classifier_free_guidance:
-                        single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
+                        single_image_embeds = torch.cat(
+                            [single_negative_image_embeds, single_image_embeds]
+                        )
                         single_image_embeds = single_image_embeds.to(device)
 
                     image_embeds.append(single_image_embeds)
@@ -522,17 +635,30 @@ def create_pipeline():
                 image_embeds = []
                 for single_image_embeds in ip_adapter_image_embeds:
                     if do_classifier_free_guidance:
-                        single_negative_image_embeds, single_image_embeds = single_image_embeds.chunk(2)
+                        (
+                            single_negative_image_embeds,
+                            single_image_embeds,
+                        ) = single_image_embeds.chunk(2)
                         single_image_embeds = single_image_embeds.repeat(
-                            num_images_per_prompt, *(repeat_dims * len(single_image_embeds.shape[1:]))
+                            num_images_per_prompt,
+                            *(repeat_dims * len(single_image_embeds.shape[1:])),
                         )
-                        single_negative_image_embeds = single_negative_image_embeds.repeat(
-                            num_images_per_prompt, *(repeat_dims * len(single_negative_image_embeds.shape[1:]))
+                        single_negative_image_embeds = (
+                            single_negative_image_embeds.repeat(
+                                num_images_per_prompt,
+                                *(
+                                    repeat_dims
+                                    * len(single_negative_image_embeds.shape[1:])
+                                ),
+                            )
                         )
-                        single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
+                        single_image_embeds = torch.cat(
+                            [single_negative_image_embeds, single_image_embeds]
+                        )
                     else:
                         single_image_embeds = single_image_embeds.repeat(
-                            num_images_per_prompt, *(repeat_dims * len(single_image_embeds.shape[1:]))
+                            num_images_per_prompt,
+                            *(repeat_dims * len(single_image_embeds.shape[1:])),
                         )
                     image_embeds.append(single_image_embeds)
 
@@ -545,13 +671,17 @@ def create_pipeline():
             # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
             # and should be between [0, 1]
 
-            accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
+            accepts_eta = "eta" in set(
+                inspect.signature(self.scheduler.step).parameters.keys()
+            )
             extra_step_kwargs = {}
             if accepts_eta:
                 extra_step_kwargs["eta"] = eta
 
             # check if the scheduler accepts generator
-            accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
+            accepts_generator = "generator" in set(
+                inspect.signature(self.scheduler.step).parameters.keys()
+            )
             if accepts_generator:
                 extra_step_kwargs["generator"] = generator
             return extra_step_kwargs
@@ -575,14 +705,17 @@ def create_pipeline():
             control_guidance_end=1.0,
             callback_on_step_end_tensor_inputs=None,
         ):
-            if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):
+            if callback_steps is not None and (
+                not isinstance(callback_steps, int) or callback_steps <= 0
+            ):
                 raise ValueError(
                     f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
                     f" {type(callback_steps)}."
                 )
 
             if callback_on_step_end_tensor_inputs is not None and not all(
-                k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
+                k in self._callback_tensor_inputs
+                for k in callback_on_step_end_tensor_inputs
             ):
                 raise ValueError(
                     f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -602,10 +735,18 @@ def create_pipeline():
                 raise ValueError(
                     "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
                 )
-            elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
-                raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
-            elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
-                raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
+            elif prompt is not None and (
+                not isinstance(prompt, str) and not isinstance(prompt, list)
+            ):
+                raise ValueError(
+                    f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
+                )
+            elif prompt_2 is not None and (
+                not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
+            ):
+                raise ValueError(
+                    f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
+                )
 
             if negative_prompt is not None and negative_prompt_embeds is not None:
                 raise ValueError(
@@ -631,7 +772,10 @@ def create_pipeline():
                     "If `prompt_embeds` are provided, `pooled_prompt_embeds` also have to be passed. Make sure to generate `pooled_prompt_embeds` from the same text encoder that was used to generate `prompt_embeds`."
                 )
 
-            if negative_prompt_embeds is not None and negative_pooled_prompt_embeds is None:
+            if (
+                negative_prompt_embeds is not None
+                and negative_pooled_prompt_embeds is None
+            ):
                 raise ValueError(
                     "If `negative_prompt_embeds` are provided, `negative_pooled_prompt_embeds` also have to be passed. Make sure to generate `negative_pooled_prompt_embeds` from the same text encoder that was used to generate `negative_prompt_embeds`."
                 )
@@ -661,12 +805,16 @@ def create_pipeline():
                 and isinstance(self.controlnet._orig_mod, MultiControlNetModel)
             ):
                 if not isinstance(image, list):
-                    raise TypeError("For multiple controlnets: `image` must be type `list`")
+                    raise TypeError(
+                        "For multiple controlnets: `image` must be type `list`"
+                    )
 
                 # When `image` is a nested list:
                 # (e.g. [[canny_image_1, pose_image_1], [canny_image_2, pose_image_2]])
                 elif any(isinstance(i, list) for i in image):
-                    raise ValueError("A single batch of multiple conditionings are supported at the moment.")
+                    raise ValueError(
+                        "A single batch of multiple conditionings are supported at the moment."
+                    )
                 elif len(image) != len(self.controlnet.nets):
                     raise ValueError(
                         f"For multiple controlnets: `image` must have the same length as the number of controlnets, but got {len(image)} images and {len(self.controlnet.nets)} ControlNets."
@@ -684,7 +832,9 @@ def create_pipeline():
                 and isinstance(self.controlnet._orig_mod, ControlNetModel)
             ):
                 if not isinstance(controlnet_conditioning_scale, float):
-                    raise TypeError("For single controlnet: `controlnet_conditioning_scale` must be type `float`.")
+                    raise TypeError(
+                        "For single controlnet: `controlnet_conditioning_scale` must be type `float`."
+                    )
             elif (
                 isinstance(self.controlnet, MultiControlNetModel)
                 or is_compiled
@@ -692,10 +842,12 @@ def create_pipeline():
             ):
                 if isinstance(controlnet_conditioning_scale, list):
                     if any(isinstance(i, list) for i in controlnet_conditioning_scale):
-                        raise ValueError("A single batch of multiple conditionings are supported at the moment.")
-                elif isinstance(controlnet_conditioning_scale, list) and len(controlnet_conditioning_scale) != len(
-                    self.controlnet.nets
-                ):
+                        raise ValueError(
+                            "A single batch of multiple conditionings are supported at the moment."
+                        )
+                elif isinstance(controlnet_conditioning_scale, list) and len(
+                    controlnet_conditioning_scale
+                ) != len(self.controlnet.nets):
                     raise ValueError(
                         "For multiple controlnets: When `controlnet_conditioning_scale` is specified as `list`, it must have"
                         " the same length as the number of controlnets"
@@ -726,9 +878,13 @@ def create_pipeline():
                         f"control guidance start: {start} cannot be larger or equal to control guidance end: {end}."
                     )
                 if start < 0.0:
-                    raise ValueError(f"control guidance start: {start} can't be smaller than 0.")
+                    raise ValueError(
+                        f"control guidance start: {start} can't be smaller than 0."
+                    )
                 if end > 1.0:
-                    raise ValueError(f"control guidance end: {end} can't be larger than 1.0.")
+                    raise ValueError(
+                        f"control guidance end: {end} can't be larger than 1.0."
+                    )
 
             if ip_adapter_image is not None and ip_adapter_image_embeds is not None:
                 raise ValueError(
@@ -750,9 +906,15 @@ def create_pipeline():
             image_is_pil = isinstance(image, PIL.Image.Image)
             image_is_tensor = isinstance(image, torch.Tensor)
             image_is_np = isinstance(image, np.ndarray)
-            image_is_pil_list = isinstance(image, list) and isinstance(image[0], PIL.Image.Image)
-            image_is_tensor_list = isinstance(image, list) and isinstance(image[0], torch.Tensor)
-            image_is_np_list = isinstance(image, list) and isinstance(image[0], np.ndarray)
+            image_is_pil_list = isinstance(image, list) and isinstance(
+                image[0], PIL.Image.Image
+            )
+            image_is_tensor_list = isinstance(image, list) and isinstance(
+                image[0], torch.Tensor
+            )
+            image_is_np_list = isinstance(image, list) and isinstance(
+                image[0], np.ndarray
+            )
 
             if (
                 not image_is_pil
@@ -796,7 +958,9 @@ def create_pipeline():
             do_classifier_free_guidance=False,
             guess_mode=False,
         ):
-            image = self.control_image_processor.preprocess(image, height=height, width=width).to(dtype=torch.float32)
+            image = self.control_image_processor.preprocess(
+                image, height=height, width=width
+            ).to(dtype=torch.float32)
             image_batch_size = image.shape[0]
 
             if image_batch_size == 1:
@@ -815,8 +979,23 @@ def create_pipeline():
             return image
 
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_latents
-        def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, generator, latents=None):
-            shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
+        def prepare_latents(
+            self,
+            batch_size,
+            num_channels_latents,
+            height,
+            width,
+            dtype,
+            device,
+            generator,
+            latents=None,
+        ):
+            shape = (
+                batch_size,
+                num_channels_latents,
+                height // self.vae_scale_factor,
+                width // self.vae_scale_factor,
+            )
             if isinstance(generator, list) and len(generator) != batch_size:
                 raise ValueError(
                     f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
@@ -824,7 +1003,9 @@ def create_pipeline():
                 )
 
             if latents is None:
-                latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+                latents = randn_tensor(
+                    shape, generator=generator, device=device, dtype=dtype
+                )
             else:
                 latents = latents.to(device)
 
@@ -834,12 +1015,18 @@ def create_pipeline():
 
         # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline._get_add_time_ids
         def _get_add_time_ids(
-            self, original_size, crops_coords_top_left, target_size, dtype, text_encoder_projection_dim=None
+            self,
+            original_size,
+            crops_coords_top_left,
+            target_size,
+            dtype,
+            text_encoder_projection_dim=None,
         ):
             add_time_ids = list(original_size + crops_coords_top_left + target_size)
 
             passed_add_embed_dim = (
-                self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
+                self.unet.config.addition_time_embed_dim * len(add_time_ids)
+                + text_encoder_projection_dim
             )
             expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
 
@@ -873,7 +1060,10 @@ def create_pipeline():
 
         # Copied from diffusers.pipelines.latent_consistency_models.pipeline_latent_consistency_text2img.LatentConsistencyModelPipeline.get_guidance_scale_embedding
         def get_guidance_scale_embedding(
-            self, w: torch.Tensor, embedding_dim: int = 512, dtype: torch.dtype = torch.float32
+            self,
+            w: torch.Tensor,
+            embedding_dim: int = 512,
+            dtype: torch.dtype = torch.float32,
         ) -> torch.FloatTensor:
             """
             See https://github.com/google-research/vdm/blob/dc27b98a554f65cdc654b800da5aa1846545d41b/model_vdm.py#L298
@@ -915,7 +1105,9 @@ def create_pipeline():
         # corresponds to doing no classifier free guidance.
         @property
         def do_classifier_free_guidance(self):
-            return self._guidance_scale > 1 and self.unet.config.time_cond_proj_dim is None
+            return (
+                self._guidance_scale > 1 and self.unet.config.time_cond_proj_dim is None
+            )
 
         @property
         def cross_attention_kwargs(self):
@@ -933,42 +1125,42 @@ def create_pipeline():
         @replace_example_docstring(EXAMPLE_DOC_STRING)
         def __call__(
             self,
-            prompt: Union[str, List[str]] = None,
-            prompt_2: Optional[Union[str, List[str]]] = None,
+            prompt: str | list[str] = None,
+            prompt_2: str | list[str] | None = None,
             image: PipelineImageInput = [],
-            height: Optional[int] = None,
-            width: Optional[int] = None,
+            height: int | None = None,
+            width: int | None = None,
             num_inference_steps: int = 50,
-            denoising_end: Optional[float] = None,
+            denoising_end: float | None = None,
             guidance_scale: float = 5.0,
-            negative_prompt: Optional[Union[str, List[str]]] = None,
-            negative_prompt_2: Optional[Union[str, List[str]]] = None,
-            num_images_per_prompt: Optional[int] = 1,
+            negative_prompt: str | list[str] | None = None,
+            negative_prompt_2: str | list[str] | None = None,
+            num_images_per_prompt: int | None = 1,
             eta: float = 0.0,
-            generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-            latents: Optional[torch.FloatTensor] = None,
-            prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-            pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-            ip_adapter_image: Optional[PipelineImageInput] = None,
-            ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
-            output_type: Optional[str] = "pil",
+            generator: torch.Generator | list[torch.Generator] | None = None,
+            latents: torch.FloatTensor | None = None,
+            prompt_embeds: torch.FloatTensor | None = None,
+            negative_prompt_embeds: torch.FloatTensor | None = None,
+            pooled_prompt_embeds: torch.FloatTensor | None = None,
+            negative_pooled_prompt_embeds: torch.FloatTensor | None = None,
+            ip_adapter_image: PipelineImageInput | None = None,
+            ip_adapter_image_embeds: list[torch.FloatTensor] | None = None,
+            output_type: str | None = "pil",
             return_dict: bool = True,
-            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-            controlnet_conditioning_scale: Union[float, List[float]] = 1.0,
+            cross_attention_kwargs: dict[str, Any] | None = None,
+            controlnet_conditioning_scale: float | list[float] = 1.0,
             guess_mode: bool = False,
-            control_guidance_start: Union[float, List[float]] = 0.0,
-            control_guidance_end: Union[float, List[float]] = 1.0,
-            original_size: Tuple[int, int] = None,
-            crops_coords_top_left: Tuple[int, int] = (0, 0),
-            target_size: Tuple[int, int] = None,
-            negative_original_size: Optional[Tuple[int, int]] = None,
-            negative_crops_coords_top_left: Tuple[int, int] = (0, 0),
-            negative_target_size: Optional[Tuple[int, int]] = None,
-            clip_skip: Optional[int] = None,
-            callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-            callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+            control_guidance_start: float | list[float] = 0.0,
+            control_guidance_end: float | list[float] = 1.0,
+            original_size: tuple[int, int] = None,
+            crops_coords_top_left: tuple[int, int] = (0, 0),
+            target_size: tuple[int, int] = None,
+            negative_original_size: tuple[int, int] | None = None,
+            negative_crops_coords_top_left: tuple[int, int] = (0, 0),
+            negative_target_size: tuple[int, int] | None = None,
+            clip_skip: int | None = None,
+            callback_on_step_end: Callable[[int, int, dict], None] | None = None,
+            callback_on_step_end_tensor_inputs: list[str] = ["latents"],
             **kwargs,
         ):
             r"""
@@ -1131,15 +1323,33 @@ def create_pipeline():
                     "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider using `callback_on_step_end`",
                 )
 
-            controlnet = self.controlnet._orig_mod if is_compiled_module(self.controlnet) else self.controlnet
+            controlnet = (
+                self.controlnet._orig_mod
+                if is_compiled_module(self.controlnet)
+                else self.controlnet
+            )
 
             # align format for control guidance
-            if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
-                control_guidance_start = len(control_guidance_end) * [control_guidance_start]
-            elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
-                control_guidance_end = len(control_guidance_start) * [control_guidance_end]
-            elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
-                mult = len(controlnet.nets) if isinstance(controlnet, MultiControlNetModel) else 1
+            if not isinstance(control_guidance_start, list) and isinstance(
+                control_guidance_end, list
+            ):
+                control_guidance_start = len(control_guidance_end) * [
+                    control_guidance_start
+                ]
+            elif not isinstance(control_guidance_end, list) and isinstance(
+                control_guidance_start, list
+            ):
+                control_guidance_end = len(control_guidance_start) * [
+                    control_guidance_end
+                ]
+            elif not isinstance(control_guidance_start, list) and not isinstance(
+                control_guidance_end, list
+            ):
+                mult = (
+                    len(controlnet.nets)
+                    if isinstance(controlnet, MultiControlNetModel)
+                    else 1
+                )
                 control_guidance_start, control_guidance_end = (
                     mult * [control_guidance_start],
                     mult * [control_guidance_end],
@@ -1180,14 +1390,20 @@ def create_pipeline():
 
             device = self._execution_device
 
-            if isinstance(controlnet, MultiControlNetModel) and isinstance(controlnet_conditioning_scale, float):
-                controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(controlnet.nets)
+            if isinstance(controlnet, MultiControlNetModel) and isinstance(
+                controlnet_conditioning_scale, float
+            ):
+                controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(
+                    controlnet.nets
+                )
 
             if isinstance(controlnet, ControlNetModel):
                 global_pool_conditions = controlnet.config.global_pool_conditions
             elif isinstance(controlnet, MultiControlNetModel):
                 if len(controlnet.nets) != 0:
-                    global_pool_conditions = controlnet.nets[0].config.global_pool_conditions
+                    global_pool_conditions = controlnet.nets[
+                        0
+                    ].config.global_pool_conditions
                 else:
                     global_pool_conditions = guess_mode
 
@@ -1195,7 +1411,9 @@ def create_pipeline():
 
             # 3.1 Encode input prompt
             text_encoder_lora_scale = (
-                self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
+                self.cross_attention_kwargs.get("scale", None)
+                if self.cross_attention_kwargs is not None
+                else None
             )
             (
                 prompt_embeds,
@@ -1287,9 +1505,12 @@ def create_pipeline():
             # 6.5 Optionally get Guidance Scale Embedding
             timestep_cond = None
             if self.unet.config.time_cond_proj_dim is not None:
-                guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
+                guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
+                    batch_size * num_images_per_prompt
+                )
                 timestep_cond = self.get_guidance_scale_embedding(
-                    guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
+                    guidance_scale_tensor,
+                    embedding_dim=self.unet.config.time_cond_proj_dim,
                 ).to(device=device, dtype=latents.dtype)
 
             # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
@@ -1302,7 +1523,9 @@ def create_pipeline():
                     1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
                     for s, e in zip(control_guidance_start, control_guidance_end)
                 ]
-                controlnet_keep.append(keeps[0] if isinstance(controlnet, ControlNetModel) else keeps)
+                controlnet_keep.append(
+                    keeps[0] if isinstance(controlnet, ControlNetModel) else keeps
+                )
 
             # 7.2 Prepare added time ids & embeddings
             if isinstance(image, list):
@@ -1340,16 +1563,24 @@ def create_pipeline():
                 negative_add_time_ids = add_time_ids
 
             if self.do_classifier_free_guidance:
-                prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-                add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+                prompt_embeds = torch.cat(
+                    [negative_prompt_embeds, prompt_embeds], dim=0
+                )
+                add_text_embeds = torch.cat(
+                    [negative_pooled_prompt_embeds, add_text_embeds], dim=0
+                )
                 add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
 
             prompt_embeds = prompt_embeds.to(device)
             add_text_embeds = add_text_embeds.to(device)
-            add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
+            add_time_ids = add_time_ids.to(device).repeat(
+                batch_size * num_images_per_prompt, 1
+            )
 
             # 8. Denoising loop
-            num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+            num_warmup_steps = (
+                len(timesteps) - num_inference_steps * self.scheduler.order
+            )
 
             # 8.1 Apply denoising_end
             if (
@@ -1361,10 +1592,15 @@ def create_pipeline():
                 discrete_timestep_cutoff = int(
                     round(
                         self.scheduler.config.num_train_timesteps
-                        - (self.denoising_end * self.scheduler.config.num_train_timesteps)
+                        - (
+                            self.denoising_end
+                            * self.scheduler.config.num_train_timesteps
+                        )
                     )
                 )
-                num_inference_steps = len(list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps)))
+                num_inference_steps = len(
+                    list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps))
+                )
                 timesteps = timesteps[:num_inference_steps]
 
             is_unet_compiled = is_compiled_module(self.unet)
@@ -1374,19 +1610,32 @@ def create_pipeline():
                 for i, t in enumerate(timesteps):
                     # Relevant thread:
                     # https://dev-discuss.pytorch.org/t/cudagraphs-in-pytorch-2-0/1428
-                    if (is_unet_compiled and is_controlnet_compiled) and is_torch_higher_equal_2_1:
+                    if (
+                        is_unet_compiled and is_controlnet_compiled
+                    ) and is_torch_higher_equal_2_1:
                         torch._inductor.cudagraph_mark_step_begin()
                     # expand the latents if we are doing classifier free guidance
-                    latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
-                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                    latent_model_input = (
+                        torch.cat([latents] * 2)
+                        if self.do_classifier_free_guidance
+                        else latents
+                    )
+                    latent_model_input = self.scheduler.scale_model_input(
+                        latent_model_input, t
+                    )
 
-                    added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+                    added_cond_kwargs = {
+                        "text_embeds": add_text_embeds,
+                        "time_ids": add_time_ids,
+                    }
 
                     # controlnet(s) inference
                     if guess_mode and self.do_classifier_free_guidance:
                         # Infer ControlNet only for the conditional batch.
                         control_model_input = latents
-                        control_model_input = self.scheduler.scale_model_input(control_model_input, t)
+                        control_model_input = self.scheduler.scale_model_input(
+                            control_model_input, t
+                        )
                         controlnet_prompt_embeds = prompt_embeds.chunk(2)[1]
                         controlnet_added_cond_kwargs = {
                             "text_embeds": add_text_embeds.chunk(2)[1],
@@ -1398,14 +1647,22 @@ def create_pipeline():
                         controlnet_added_cond_kwargs = added_cond_kwargs
 
                     if isinstance(controlnet_keep[i], list):
-                        cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
+                        cond_scale = [
+                            c * s
+                            for c, s in zip(
+                                controlnet_conditioning_scale, controlnet_keep[i]
+                            )
+                        ]
                     else:
                         controlnet_cond_scale = controlnet_conditioning_scale
                         if isinstance(controlnet_cond_scale, list):
                             controlnet_cond_scale = controlnet_cond_scale[0]
                         cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
-                    if isinstance(controlnet, MultiControlNetModel) and len(controlnet.nets) == 0:
+                    if (
+                        isinstance(controlnet, MultiControlNetModel)
+                        and len(controlnet.nets) == 0
+                    ):
                         down_block_res_samples, mid_block_res_sample = None, None
                     else:
                         down_block_res_samples, mid_block_res_sample = self.controlnet(
@@ -1419,14 +1676,29 @@ def create_pipeline():
                             return_dict=False,
                         )
 
-                    if guess_mode and self.do_classifier_free_guidance and mid_block_res_sample is not None:
-                        # Infered ControlNet only for the conditional batch.
+                    if (
+                        guess_mode
+                        and self.do_classifier_free_guidance
+                        and mid_block_res_sample is not None
+                    ):
+                        # Inferred ControlNet only for the conditional batch.
                         # To apply the output of ControlNet to both the unconditional and conditional batches,
                         # add 0 to the unconditional batch to keep it unchanged.
-                        down_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in down_block_res_samples]
-                        mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
+                        down_block_res_samples = [
+                            torch.cat([torch.zeros_like(d), d])
+                            for d in down_block_res_samples
+                        ]
+                        mid_block_res_sample = torch.cat(
+                            [
+                                torch.zeros_like(mid_block_res_sample),
+                                mid_block_res_sample,
+                            ]
+                        )
 
-                    if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
+                    if (
+                        ip_adapter_image is not None
+                        or ip_adapter_image_embeds is not None
+                    ):
                         added_cond_kwargs["image_embeds"] = image_embeds
 
                     # predict the noise residual
@@ -1445,23 +1717,36 @@ def create_pipeline():
                     # perform guidance
                     if self.do_classifier_free_guidance:
                         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        noise_pred = noise_pred_uncond + guidance_scale * (
+                            noise_pred_text - noise_pred_uncond
+                        )
 
                     # compute the previous noisy sample x_t -> x_t-1
-                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                    latents = self.scheduler.step(
+                        noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                    )[0]
 
                     if callback_on_step_end is not None:
                         callback_kwargs = {}
                         for k in callback_on_step_end_tensor_inputs:
                             callback_kwargs[k] = locals()[k]
-                        callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                        callback_outputs = callback_on_step_end(
+                            self, i, t, callback_kwargs
+                        )
 
                         latents = callback_outputs.pop("latents", latents)
-                        prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                        negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                        prompt_embeds = callback_outputs.pop(
+                            "prompt_embeds", prompt_embeds
+                        )
+                        negative_prompt_embeds = callback_outputs.pop(
+                            "negative_prompt_embeds", negative_prompt_embeds
+                        )
 
                     # call the callback, if provided
-                    if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                    if i == len(timesteps) - 1 or (
+                        (i + 1) > num_warmup_steps
+                        and (i + 1) % self.scheduler.order == 0
+                    ):
                         progress_bar.update()
                         if callback is not None and i % callback_steps == 0:
                             step_idx = i // getattr(self.scheduler, "order", 1)
@@ -1469,24 +1754,41 @@ def create_pipeline():
 
             if not output_type == "latent":
                 # make sure the VAE is in float32 mode, as it overflows in float16
-                needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
+                needs_upcasting = (
+                    self.vae.dtype == torch.float16 and self.vae.config.force_upcast
+                )
 
                 if needs_upcasting:
                     self.upcast_vae()
-                    latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
+                    latents = latents.to(
+                        next(iter(self.vae.post_quant_conv.parameters())).dtype
+                    )
 
                 # unscale/denormalize the latents
                 # denormalize with the mean and std if available and not None
-                has_latents_mean = hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None
-                has_latents_std = hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None
+                has_latents_mean = (
+                    hasattr(self.vae.config, "latents_mean")
+                    and self.vae.config.latents_mean is not None
+                )
+                has_latents_std = (
+                    hasattr(self.vae.config, "latents_std")
+                    and self.vae.config.latents_std is not None
+                )
                 if has_latents_mean and has_latents_std:
                     latents_mean = (
-                        torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                        torch.tensor(self.vae.config.latents_mean)
+                        .view(1, 4, 1, 1)
+                        .to(latents.device, latents.dtype)
                     )
                     latents_std = (
-                        torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                        torch.tensor(self.vae.config.latents_std)
+                        .view(1, 4, 1, 1)
+                        .to(latents.device, latents.dtype)
                     )
-                    latents = latents * latents_std / self.vae.config.scaling_factor + latents_mean
+                    latents = (
+                        latents * latents_std / self.vae.config.scaling_factor
+                        + latents_mean
+                    )
                 else:
                     latents = latents / self.vae.config.scaling_factor
 
@@ -1513,15 +1815,12 @@ def create_pipeline():
 
             return StableDiffusionXLPipelineOutput(images=image)
 
-
-
-
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
     def retrieve_timesteps(
         scheduler,
-        num_inference_steps: Optional[int] = None,
-        device: Optional[Union[str, torch.device]] = None,
-        timesteps: Optional[List[int]] = None,
+        num_inference_steps: int | None = None,
+        device: str | torch.device | None = None,
+        timesteps: list[int] | None = None,
         **kwargs,
     ):
         """
@@ -1546,7 +1845,9 @@ def create_pipeline():
             second element is the number of inference steps.
         """
         if timesteps is not None:
-            accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
+            accepts_timesteps = "timesteps" in set(
+                inspect.signature(scheduler.set_timesteps).parameters.keys()
+            )
             if not accepts_timesteps:
                 raise ValueError(
                     f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -1559,7 +1860,6 @@ def create_pipeline():
             scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
             timesteps = scheduler.timesteps
         return timesteps, num_inference_steps
-
 
     class StableDiffusionControlNetPipeline(
         DiffusionPipeline,
@@ -1617,7 +1917,10 @@ def create_pipeline():
             text_encoder: CLIPTextModel,
             tokenizer: CLIPTokenizer,
             unet: UNet2DConditionModel,
-            controlnet: Union[ControlNetModel, List[ControlNetModel], Tuple[ControlNetModel], MultiControlNetModel],
+            controlnet: ControlNetModel
+            | list[ControlNetModel]
+            | tuple[ControlNetModel]
+            | MultiControlNetModel,
             scheduler: KarrasDiffusionSchedulers,
             safety_checker: StableDiffusionSafetyChecker,
             feature_extractor: CLIPImageProcessor,
@@ -1657,9 +1960,13 @@ def create_pipeline():
                 image_encoder=image_encoder,
             )
             self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-            self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True)
+            self.image_processor = VaeImageProcessor(
+                vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
+            )
             self.control_image_processor = VaeImageProcessor(
-                vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True, do_normalize=False
+                vae_scale_factor=self.vae_scale_factor,
+                do_convert_rgb=True,
+                do_normalize=False,
             )
             self.register_to_config(requires_safety_checker=requires_safety_checker)
 
@@ -1671,13 +1978,15 @@ def create_pipeline():
             num_images_per_prompt,
             do_classifier_free_guidance,
             negative_prompt=None,
-            prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-            lora_scale: Optional[float] = None,
+            prompt_embeds: torch.FloatTensor | None = None,
+            negative_prompt_embeds: torch.FloatTensor | None = None,
+            lora_scale: float | None = None,
             **kwargs,
         ):
             deprecation_message = "`_encode_prompt()` is deprecated and it will be removed in a future version. Use `encode_prompt()` instead. Also, be aware that the output format changed from a concatenated tensor to a tuple."
-            deprecate("_encode_prompt()", "1.0.0", deprecation_message, standard_warn=False)
+            deprecate(
+                "_encode_prompt()", "1.0.0", deprecation_message, standard_warn=False
+            )
 
             prompt_embeds_tuple = self.encode_prompt(
                 prompt=prompt,
@@ -1704,10 +2013,10 @@ def create_pipeline():
             num_images_per_prompt,
             do_classifier_free_guidance,
             negative_prompt=None,
-            prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-            lora_scale: Optional[float] = None,
-            clip_skip: Optional[int] = None,
+            prompt_embeds: torch.FloatTensor | None = None,
+            negative_prompt_embeds: torch.FloatTensor | None = None,
+            lora_scale: float | None = None,
+            clip_skip: int | None = None,
         ):
             r"""
             Encodes the prompt into text encoder hidden states.
@@ -1769,11 +2078,13 @@ def create_pipeline():
                     return_tensors="pt",
                 )
                 text_input_ids = text_inputs.input_ids
-                untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+                untruncated_ids = self.tokenizer(
+                    prompt, padding="longest", return_tensors="pt"
+                ).input_ids
 
-                if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-                    text_input_ids, untruncated_ids
-                ):
+                if untruncated_ids.shape[-1] >= text_input_ids.shape[
+                    -1
+                ] and not torch.equal(text_input_ids, untruncated_ids):
                     removed_text = self.tokenizer.batch_decode(
                         untruncated_ids[:, self.tokenizer.model_max_length - 1 : -1]
                     )
@@ -1782,17 +2093,24 @@ def create_pipeline():
                         f" {self.tokenizer.model_max_length} tokens: {removed_text}"
                     )
 
-                if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
+                if (
+                    hasattr(self.text_encoder.config, "use_attention_mask")
+                    and self.text_encoder.config.use_attention_mask
+                ):
                     attention_mask = text_inputs.attention_mask.to(device)
                 else:
                     attention_mask = None
 
                 if clip_skip is None:
-                    prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=attention_mask)
+                    prompt_embeds = self.text_encoder(
+                        text_input_ids.to(device), attention_mask=attention_mask
+                    )
                     prompt_embeds = prompt_embeds[0]
                 else:
                     prompt_embeds = self.text_encoder(
-                        text_input_ids.to(device), attention_mask=attention_mask, output_hidden_states=True
+                        text_input_ids.to(device),
+                        attention_mask=attention_mask,
+                        output_hidden_states=True,
                     )
                     # Access the `hidden_states` first, that contains a tuple of
                     # all the hidden states from the encoder layers. Then index into
@@ -1802,7 +2120,9 @@ def create_pipeline():
                     # representations. The `last_hidden_states` that we typically use for
                     # obtaining the final prompt representations passes through the LayerNorm
                     # layer.
-                    prompt_embeds = self.text_encoder.text_model.final_layer_norm(prompt_embeds)
+                    prompt_embeds = self.text_encoder.text_model.final_layer_norm(
+                        prompt_embeds
+                    )
 
             if self.text_encoder is not None:
                 prompt_embeds_dtype = self.text_encoder.dtype
@@ -1816,11 +2136,13 @@ def create_pipeline():
             bs_embed, seq_len, _ = prompt_embeds.shape
             # duplicate text embeddings for each generation per prompt, using mps friendly method
             prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-            prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
+            prompt_embeds = prompt_embeds.view(
+                bs_embed * num_images_per_prompt, seq_len, -1
+            )
 
             # get unconditional embeddings for classifier free guidance
             if do_classifier_free_guidance and negative_prompt_embeds is None:
-                uncond_tokens: List[str]
+                uncond_tokens: list[str]
                 if negative_prompt is None:
                     uncond_tokens = [""] * batch_size
                 elif prompt is not None and type(prompt) is not type(negative_prompt):
@@ -1841,7 +2163,9 @@ def create_pipeline():
 
                 # textual inversion: process multi-vector tokens if necessary
                 if isinstance(self, TextualInversionLoaderMixin):
-                    uncond_tokens = self.maybe_convert_prompt(uncond_tokens, self.tokenizer)
+                    uncond_tokens = self.maybe_convert_prompt(
+                        uncond_tokens, self.tokenizer
+                    )
 
                 max_length = prompt_embeds.shape[1]
                 uncond_input = self.tokenizer(
@@ -1852,7 +2176,10 @@ def create_pipeline():
                     return_tensors="pt",
                 )
 
-                if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
+                if (
+                    hasattr(self.text_encoder.config, "use_attention_mask")
+                    and self.text_encoder.config.use_attention_mask
+                ):
                     attention_mask = uncond_input.attention_mask.to(device)
                 else:
                     attention_mask = None
@@ -1867,10 +2194,16 @@ def create_pipeline():
                 # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
                 seq_len = negative_prompt_embeds.shape[1]
 
-                negative_prompt_embeds = negative_prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
+                negative_prompt_embeds = negative_prompt_embeds.to(
+                    dtype=prompt_embeds_dtype, device=device
+                )
 
-                negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
-                negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+                negative_prompt_embeds = negative_prompt_embeds.repeat(
+                    1, num_images_per_prompt, 1
+                )
+                negative_prompt_embeds = negative_prompt_embeds.view(
+                    batch_size * num_images_per_prompt, seq_len, -1
+                )
 
             if isinstance(self, LoraLoaderMixin) and USE_PEFT_BACKEND:
                 # Retrieve the original scale by scaling back the LoRA layers
@@ -1879,7 +2212,9 @@ def create_pipeline():
             return prompt_embeds, negative_prompt_embeds
 
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_image
-        def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
+        def encode_image(
+            self, image, device, num_images_per_prompt, output_hidden_states=None
+        ):
             dtype = next(self.image_encoder.parameters()).dtype
 
             if not isinstance(image, torch.Tensor):
@@ -1887,31 +2222,46 @@ def create_pipeline():
 
             image = image.to(device=device, dtype=dtype)
             if output_hidden_states:
-                image_enc_hidden_states = self.image_encoder(image, output_hidden_states=True).hidden_states[-2]
-                image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
+                image_enc_hidden_states = self.image_encoder(
+                    image, output_hidden_states=True
+                ).hidden_states[-2]
+                image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(
+                    num_images_per_prompt, dim=0
+                )
                 uncond_image_enc_hidden_states = self.image_encoder(
                     torch.zeros_like(image), output_hidden_states=True
                 ).hidden_states[-2]
-                uncond_image_enc_hidden_states = uncond_image_enc_hidden_states.repeat_interleave(
-                    num_images_per_prompt, dim=0
+                uncond_image_enc_hidden_states = (
+                    uncond_image_enc_hidden_states.repeat_interleave(
+                        num_images_per_prompt, dim=0
+                    )
                 )
                 return image_enc_hidden_states, uncond_image_enc_hidden_states
             else:
                 image_embeds = self.image_encoder(image).image_embeds
-                image_embeds = image_embeds.repeat_interleave(num_images_per_prompt, dim=0)
+                image_embeds = image_embeds.repeat_interleave(
+                    num_images_per_prompt, dim=0
+                )
                 uncond_image_embeds = torch.zeros_like(image_embeds)
 
                 return image_embeds, uncond_image_embeds
 
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_ip_adapter_image_embeds
         def prepare_ip_adapter_image_embeds(
-            self, ip_adapter_image, ip_adapter_image_embeds, device, num_images_per_prompt, do_classifier_free_guidance
+            self,
+            ip_adapter_image,
+            ip_adapter_image_embeds,
+            device,
+            num_images_per_prompt,
+            do_classifier_free_guidance,
         ):
             if ip_adapter_image_embeds is None:
                 if not isinstance(ip_adapter_image, list):
                     ip_adapter_image = [ip_adapter_image]
 
-                if len(ip_adapter_image) != len(self.unet.encoder_hid_proj.image_projection_layers):
+                if len(ip_adapter_image) != len(
+                    self.unet.encoder_hid_proj.image_projection_layers
+                ):
                     raise ValueError(
                         f"`ip_adapter_image` must have same length as the number of IP Adapters. Got {len(ip_adapter_image)} images and {len(self.unet.encoder_hid_proj.image_projection_layers)} IP Adapters."
                     )
@@ -1920,17 +2270,26 @@ def create_pipeline():
                 for single_ip_adapter_image, image_proj_layer in zip(
                     ip_adapter_image, self.unet.encoder_hid_proj.image_projection_layers
                 ):
-                    output_hidden_state = not isinstance(image_proj_layer, ImageProjection)
-                    single_image_embeds, single_negative_image_embeds = self.encode_image(
+                    output_hidden_state = not isinstance(
+                        image_proj_layer, ImageProjection
+                    )
+                    (
+                        single_image_embeds,
+                        single_negative_image_embeds,
+                    ) = self.encode_image(
                         single_ip_adapter_image, device, 1, output_hidden_state
                     )
-                    single_image_embeds = torch.stack([single_image_embeds] * num_images_per_prompt, dim=0)
+                    single_image_embeds = torch.stack(
+                        [single_image_embeds] * num_images_per_prompt, dim=0
+                    )
                     single_negative_image_embeds = torch.stack(
                         [single_negative_image_embeds] * num_images_per_prompt, dim=0
                     )
 
                     if do_classifier_free_guidance:
-                        single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
+                        single_image_embeds = torch.cat(
+                            [single_negative_image_embeds, single_image_embeds]
+                        )
                         single_image_embeds = single_image_embeds.to(device)
 
                     image_embeds.append(single_image_embeds)
@@ -1939,17 +2298,30 @@ def create_pipeline():
                 image_embeds = []
                 for single_image_embeds in ip_adapter_image_embeds:
                     if do_classifier_free_guidance:
-                        single_negative_image_embeds, single_image_embeds = single_image_embeds.chunk(2)
+                        (
+                            single_negative_image_embeds,
+                            single_image_embeds,
+                        ) = single_image_embeds.chunk(2)
                         single_image_embeds = single_image_embeds.repeat(
-                            num_images_per_prompt, *(repeat_dims * len(single_image_embeds.shape[1:]))
+                            num_images_per_prompt,
+                            *(repeat_dims * len(single_image_embeds.shape[1:])),
                         )
-                        single_negative_image_embeds = single_negative_image_embeds.repeat(
-                            num_images_per_prompt, *(repeat_dims * len(single_negative_image_embeds.shape[1:]))
+                        single_negative_image_embeds = (
+                            single_negative_image_embeds.repeat(
+                                num_images_per_prompt,
+                                *(
+                                    repeat_dims
+                                    * len(single_negative_image_embeds.shape[1:])
+                                ),
+                            )
                         )
-                        single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
+                        single_image_embeds = torch.cat(
+                            [single_negative_image_embeds, single_image_embeds]
+                        )
                     else:
                         single_image_embeds = single_image_embeds.repeat(
-                            num_images_per_prompt, *(repeat_dims * len(single_image_embeds.shape[1:]))
+                            num_images_per_prompt,
+                            *(repeat_dims * len(single_image_embeds.shape[1:])),
                         )
                     image_embeds.append(single_image_embeds)
 
@@ -1961,10 +2333,14 @@ def create_pipeline():
                 has_nsfw_concept = None
             else:
                 if torch.is_tensor(image):
-                    feature_extractor_input = self.image_processor.postprocess(image, output_type="pil")
+                    feature_extractor_input = self.image_processor.postprocess(
+                        image, output_type="pil"
+                    )
                 else:
                     feature_extractor_input = self.image_processor.numpy_to_pil(image)
-                safety_checker_input = self.feature_extractor(feature_extractor_input, return_tensors="pt").to(device)
+                safety_checker_input = self.feature_extractor(
+                    feature_extractor_input, return_tensors="pt"
+                ).to(device)
                 image, has_nsfw_concept = self.safety_checker(
                     images=image, clip_input=safety_checker_input.pixel_values.to(dtype)
                 )
@@ -1973,7 +2349,9 @@ def create_pipeline():
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.decode_latents
         def decode_latents(self, latents):
             deprecation_message = "The decode_latents method is deprecated and will be removed in 1.0.0. Please use VaeImageProcessor.postprocess(...) instead"
-            deprecate("decode_latents", "1.0.0", deprecation_message, standard_warn=False)
+            deprecate(
+                "decode_latents", "1.0.0", deprecation_message, standard_warn=False
+            )
 
             latents = 1 / self.vae.config.scaling_factor * latents
             image = self.vae.decode(latents, return_dict=False)[0]
@@ -1989,13 +2367,17 @@ def create_pipeline():
             # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
             # and should be between [0, 1]
 
-            accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
+            accepts_eta = "eta" in set(
+                inspect.signature(self.scheduler.step).parameters.keys()
+            )
             extra_step_kwargs = {}
             if accepts_eta:
                 extra_step_kwargs["eta"] = eta
 
             # check if the scheduler accepts generator
-            accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
+            accepts_generator = "generator" in set(
+                inspect.signature(self.scheduler.step).parameters.keys()
+            )
             if accepts_generator:
                 extra_step_kwargs["generator"] = generator
             return extra_step_kwargs
@@ -2015,14 +2397,17 @@ def create_pipeline():
             control_guidance_end=1.0,
             callback_on_step_end_tensor_inputs=None,
         ):
-            if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):
+            if callback_steps is not None and (
+                not isinstance(callback_steps, int) or callback_steps <= 0
+            ):
                 raise ValueError(
                     f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
                     f" {type(callback_steps)}."
                 )
 
             if callback_on_step_end_tensor_inputs is not None and not all(
-                k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
+                k in self._callback_tensor_inputs
+                for k in callback_on_step_end_tensor_inputs
             ):
                 raise ValueError(
                     f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -2037,8 +2422,12 @@ def create_pipeline():
                 raise ValueError(
                     "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
                 )
-            elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
-                raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+            elif prompt is not None and (
+                not isinstance(prompt, str) and not isinstance(prompt, list)
+            ):
+                raise ValueError(
+                    f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
+                )
 
             if negative_prompt is not None and negative_prompt_embeds is not None:
                 raise ValueError(
@@ -2070,7 +2459,9 @@ def create_pipeline():
                 and isinstance(self.controlnet._orig_mod, MultiControlNetModel)
             ):
                 if not isinstance(image, list):
-                    raise TypeError("For multiple controlnets: `image` must be type `list`")
+                    raise TypeError(
+                        "For multiple controlnets: `image` must be type `list`"
+                    )
 
                 # When `image` is a nested list:
                 # (e.g. [[canny_image_1, pose_image_1], [canny_image_2, pose_image_2]])
@@ -2099,7 +2490,9 @@ def create_pipeline():
                 and isinstance(self.controlnet._orig_mod, ControlNetModel)
             ):
                 if not isinstance(controlnet_conditioning_scale, float):
-                    raise TypeError("For single controlnet: `controlnet_conditioning_scale` must be type `float`.")
+                    raise TypeError(
+                        "For single controlnet: `controlnet_conditioning_scale` must be type `float`."
+                    )
             elif (
                 isinstance(self.controlnet, MultiControlNetModel)
                 or is_compiled
@@ -2111,9 +2504,9 @@ def create_pipeline():
                             "A single batch of varying conditioning scale settings (e.g. [[1.0, 0.5], [0.2, 0.8]]) is not supported at the moment. "
                             "The conditioning scale must be fixed across the batch."
                         )
-                elif isinstance(controlnet_conditioning_scale, list) and len(controlnet_conditioning_scale) != len(
-                    self.controlnet.nets
-                ):
+                elif isinstance(controlnet_conditioning_scale, list) and len(
+                    controlnet_conditioning_scale
+                ) != len(self.controlnet.nets):
                     raise ValueError(
                         "For multiple controlnets: When `controlnet_conditioning_scale` is specified as `list`, it must have"
                         " the same length as the number of controlnets"
@@ -2144,9 +2537,13 @@ def create_pipeline():
                         f"control guidance start: {start} cannot be larger or equal to control guidance end: {end}."
                     )
                 if start < 0.0:
-                    raise ValueError(f"control guidance start: {start} can't be smaller than 0.")
+                    raise ValueError(
+                        f"control guidance start: {start} can't be smaller than 0."
+                    )
                 if end > 1.0:
-                    raise ValueError(f"control guidance end: {end} can't be larger than 1.0.")
+                    raise ValueError(
+                        f"control guidance end: {end} can't be larger than 1.0."
+                    )
 
             if ip_adapter_image is not None and ip_adapter_image_embeds is not None:
                 raise ValueError(
@@ -2167,9 +2564,15 @@ def create_pipeline():
             image_is_pil = isinstance(image, PIL.Image.Image)
             image_is_tensor = isinstance(image, torch.Tensor)
             image_is_np = isinstance(image, np.ndarray)
-            image_is_pil_list = isinstance(image, list) and isinstance(image[0], PIL.Image.Image)
-            image_is_tensor_list = isinstance(image, list) and isinstance(image[0], torch.Tensor)
-            image_is_np_list = isinstance(image, list) and isinstance(image[0], np.ndarray)
+            image_is_pil_list = isinstance(image, list) and isinstance(
+                image[0], PIL.Image.Image
+            )
+            image_is_tensor_list = isinstance(image, list) and isinstance(
+                image[0], torch.Tensor
+            )
+            image_is_np_list = isinstance(image, list) and isinstance(
+                image[0], np.ndarray
+            )
 
             if (
                 not image_is_pil
@@ -2212,7 +2615,9 @@ def create_pipeline():
             do_classifier_free_guidance=False,
             guess_mode=False,
         ):
-            image = self.control_image_processor.preprocess(image, height=height, width=width).to(dtype=torch.float32)
+            image = self.control_image_processor.preprocess(
+                image, height=height, width=width
+            ).to(dtype=torch.float32)
             image_batch_size = image.shape[0]
 
             if image_batch_size == 1:
@@ -2231,8 +2636,23 @@ def create_pipeline():
             return image
 
         # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_latents
-        def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, generator, latents=None):
-            shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
+        def prepare_latents(
+            self,
+            batch_size,
+            num_channels_latents,
+            height,
+            width,
+            dtype,
+            device,
+            generator,
+            latents=None,
+        ):
+            shape = (
+                batch_size,
+                num_channels_latents,
+                height // self.vae_scale_factor,
+                width // self.vae_scale_factor,
+            )
             if isinstance(generator, list) and len(generator) != batch_size:
                 raise ValueError(
                     f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
@@ -2240,7 +2660,9 @@ def create_pipeline():
                 )
 
             if latents is None:
-                latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+                latents = randn_tensor(
+                    shape, generator=generator, device=device, dtype=dtype
+                )
             else:
                 latents = latents.to(device)
 
@@ -2250,7 +2672,10 @@ def create_pipeline():
 
         # Copied from diffusers.pipelines.latent_consistency_models.pipeline_latent_consistency_text2img.LatentConsistencyModelPipeline.get_guidance_scale_embedding
         def get_guidance_scale_embedding(
-            self, w: torch.Tensor, embedding_dim: int = 512, dtype: torch.dtype = torch.float32
+            self,
+            w: torch.Tensor,
+            embedding_dim: int = 512,
+            dtype: torch.dtype = torch.float32,
         ) -> torch.FloatTensor:
             """
             See https://github.com/google-research/vdm/blob/dc27b98a554f65cdc654b800da5aa1846545d41b/model_vdm.py#L298
@@ -2292,7 +2717,9 @@ def create_pipeline():
         # corresponds to doing no classifier free guidance.
         @property
         def do_classifier_free_guidance(self):
-            return self._guidance_scale > 1 and self.unet.config.time_cond_proj_dim is None
+            return (
+                self._guidance_scale > 1 and self.unet.config.time_cond_proj_dim is None
+            )
 
         @property
         def cross_attention_kwargs(self):
@@ -2306,32 +2733,32 @@ def create_pipeline():
         @replace_example_docstring(EXAMPLE_DOC_STRING)
         def __call__(
             self,
-            prompt: Union[str, List[str]] = None,
+            prompt: str | list[str] = None,
             image: PipelineImageInput = [],
-            height: Optional[int] = None,
-            width: Optional[int] = None,
+            height: int | None = None,
+            width: int | None = None,
             num_inference_steps: int = 50,
-            timesteps: List[int] = None,
+            timesteps: list[int] = None,
             guidance_scale: float = 7.5,
-            negative_prompt: Optional[Union[str, List[str]]] = None,
-            num_images_per_prompt: Optional[int] = 1,
+            negative_prompt: str | list[str] | None = None,
+            num_images_per_prompt: int | None = 1,
             eta: float = 0.0,
-            generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-            latents: Optional[torch.FloatTensor] = None,
-            prompt_embeds: Optional[torch.FloatTensor] = None,
-            negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-            ip_adapter_image: Optional[PipelineImageInput] = None,
-            ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
-            output_type: Optional[str] = "pil",
+            generator: torch.Generator | list[torch.Generator] | None = None,
+            latents: torch.FloatTensor | None = None,
+            prompt_embeds: torch.FloatTensor | None = None,
+            negative_prompt_embeds: torch.FloatTensor | None = None,
+            ip_adapter_image: PipelineImageInput | None = None,
+            ip_adapter_image_embeds: list[torch.FloatTensor] | None = None,
+            output_type: str | None = "pil",
             return_dict: bool = True,
-            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-            controlnet_conditioning_scale: Union[float, List[float]] = 1.0,
+            cross_attention_kwargs: dict[str, Any] | None = None,
+            controlnet_conditioning_scale: float | list[float] = 1.0,
             guess_mode: bool = False,
-            control_guidance_start: Union[float, List[float]] = 0.0,
-            control_guidance_end: Union[float, List[float]] = 1.0,
-            clip_skip: Optional[int] = None,
-            callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-            callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+            control_guidance_start: float | list[float] = 0.0,
+            control_guidance_end: float | list[float] = 1.0,
+            clip_skip: int | None = None,
+            callback_on_step_end: Callable[[int, int, dict], None] | None = None,
+            callback_on_step_end_tensor_inputs: list[str] = ["latents"],
             **kwargs,
         ):
             r"""
@@ -2455,15 +2882,33 @@ def create_pipeline():
                     "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider using `callback_on_step_end`",
                 )
 
-            controlnet = self.controlnet._orig_mod if is_compiled_module(self.controlnet) else self.controlnet
+            controlnet = (
+                self.controlnet._orig_mod
+                if is_compiled_module(self.controlnet)
+                else self.controlnet
+            )
 
             # align format for control guidance
-            if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
-                control_guidance_start = len(control_guidance_end) * [control_guidance_start]
-            elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
-                control_guidance_end = len(control_guidance_start) * [control_guidance_end]
-            elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
-                mult = len(controlnet.nets) if isinstance(controlnet, MultiControlNetModel) else 1
+            if not isinstance(control_guidance_start, list) and isinstance(
+                control_guidance_end, list
+            ):
+                control_guidance_start = len(control_guidance_end) * [
+                    control_guidance_start
+                ]
+            elif not isinstance(control_guidance_end, list) and isinstance(
+                control_guidance_start, list
+            ):
+                control_guidance_end = len(control_guidance_start) * [
+                    control_guidance_end
+                ]
+            elif not isinstance(control_guidance_start, list) and not isinstance(
+                control_guidance_end, list
+            ):
+                mult = (
+                    len(controlnet.nets)
+                    if isinstance(controlnet, MultiControlNetModel)
+                    else 1
+                )
                 control_guidance_start, control_guidance_end = (
                     mult * [control_guidance_start],
                     mult * [control_guidance_end],
@@ -2499,14 +2944,20 @@ def create_pipeline():
 
             device = self._execution_device
 
-            if isinstance(controlnet, MultiControlNetModel) and isinstance(controlnet_conditioning_scale, float):
-                controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(controlnet.nets)
+            if isinstance(controlnet, MultiControlNetModel) and isinstance(
+                controlnet_conditioning_scale, float
+            ):
+                controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(
+                    controlnet.nets
+                )
 
             if isinstance(controlnet, ControlNetModel):
                 global_pool_conditions = controlnet.config.global_pool_conditions
             elif isinstance(controlnet, MultiControlNetModel):
                 if len(controlnet.nets) != 0:
-                    global_pool_conditions = controlnet.nets[0].config.global_pool_conditions
+                    global_pool_conditions = controlnet.nets[
+                        0
+                    ].config.global_pool_conditions
                 else:
                     global_pool_conditions = guess_mode
 
@@ -2514,7 +2965,9 @@ def create_pipeline():
 
             # 3. Encode input prompt
             text_encoder_lora_scale = (
-                self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
+                self.cross_attention_kwargs.get("scale", None)
+                if self.cross_attention_kwargs is not None
+                else None
             )
             prompt_embeds, negative_prompt_embeds = self.encode_prompt(
                 prompt,
@@ -2586,7 +3039,9 @@ def create_pipeline():
                 assert False
 
             # 5. Prepare timesteps
-            timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
+            timesteps, num_inference_steps = retrieve_timesteps(
+                self.scheduler, num_inference_steps, device, timesteps
+            )
             self._num_timesteps = len(timesteps)
 
             # 6. Prepare latent variables
@@ -2605,9 +3060,12 @@ def create_pipeline():
             # 6.5 Optionally get Guidance Scale Embedding
             timestep_cond = None
             if self.unet.config.time_cond_proj_dim is not None:
-                guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
+                guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
+                    batch_size * num_images_per_prompt
+                )
                 timestep_cond = self.get_guidance_scale_embedding(
-                    guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
+                    guidance_scale_tensor,
+                    embedding_dim=self.unet.config.time_cond_proj_dim,
                 ).to(device=device, dtype=latents.dtype)
 
             # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
@@ -2627,10 +3085,14 @@ def create_pipeline():
                     1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
                     for s, e in zip(control_guidance_start, control_guidance_end)
                 ]
-                controlnet_keep.append(keeps[0] if isinstance(controlnet, ControlNetModel) else keeps)
+                controlnet_keep.append(
+                    keeps[0] if isinstance(controlnet, ControlNetModel) else keeps
+                )
 
             # 8. Denoising loop
-            num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+            num_warmup_steps = (
+                len(timesteps) - num_inference_steps * self.scheduler.order
+            )
             is_unet_compiled = is_compiled_module(self.unet)
             is_controlnet_compiled = is_compiled_module(self.controlnet)
             is_torch_higher_equal_2_1 = is_torch_version(">=", "2.1")
@@ -2638,31 +3100,49 @@ def create_pipeline():
                 for i, t in enumerate(timesteps):
                     # Relevant thread:
                     # https://dev-discuss.pytorch.org/t/cudagraphs-in-pytorch-2-0/1428
-                    if (is_unet_compiled and is_controlnet_compiled) and is_torch_higher_equal_2_1:
+                    if (
+                        is_unet_compiled and is_controlnet_compiled
+                    ) and is_torch_higher_equal_2_1:
                         torch._inductor.cudagraph_mark_step_begin()
                     # expand the latents if we are doing classifier free guidance
-                    latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
-                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                    latent_model_input = (
+                        torch.cat([latents] * 2)
+                        if self.do_classifier_free_guidance
+                        else latents
+                    )
+                    latent_model_input = self.scheduler.scale_model_input(
+                        latent_model_input, t
+                    )
 
                     # controlnet(s) inference
                     if guess_mode and self.do_classifier_free_guidance:
                         # Infer ControlNet only for the conditional batch.
                         control_model_input = latents
-                        control_model_input = self.scheduler.scale_model_input(control_model_input, t)
+                        control_model_input = self.scheduler.scale_model_input(
+                            control_model_input, t
+                        )
                         controlnet_prompt_embeds = prompt_embeds.chunk(2)[1]
                     else:
                         control_model_input = latent_model_input
                         controlnet_prompt_embeds = prompt_embeds
 
                     if isinstance(controlnet_keep[i], list):
-                        cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
+                        cond_scale = [
+                            c * s
+                            for c, s in zip(
+                                controlnet_conditioning_scale, controlnet_keep[i]
+                            )
+                        ]
                     else:
                         controlnet_cond_scale = controlnet_conditioning_scale
                         if isinstance(controlnet_cond_scale, list):
                             controlnet_cond_scale = controlnet_cond_scale[0]
                         cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
-                    if isinstance(controlnet, MultiControlNetModel) and len(controlnet.nets) == 0:
+                    if (
+                        isinstance(controlnet, MultiControlNetModel)
+                        and len(controlnet.nets) == 0
+                    ):
                         down_block_res_samples, mid_block_res_sample = None, None
                     else:
                         down_block_res_samples, mid_block_res_sample = self.controlnet(
@@ -2675,12 +3155,24 @@ def create_pipeline():
                             return_dict=False,
                         )
 
-                    if guess_mode and self.do_classifier_free_guidance and mid_block_res_sample is not None:
-                        # Infered ControlNet only for the conditional batch.
+                    if (
+                        guess_mode
+                        and self.do_classifier_free_guidance
+                        and mid_block_res_sample is not None
+                    ):
+                        # Inferred ControlNet only for the conditional batch.
                         # To apply the output of ControlNet to both the unconditional and conditional batches,
                         # add 0 to the unconditional batch to keep it unchanged.
-                        down_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in down_block_res_samples]
-                        mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
+                        down_block_res_samples = [
+                            torch.cat([torch.zeros_like(d), d])
+                            for d in down_block_res_samples
+                        ]
+                        mid_block_res_sample = torch.cat(
+                            [
+                                torch.zeros_like(mid_block_res_sample),
+                                mid_block_res_sample,
+                            ]
+                        )
 
                     noise_pred = self.unet(
                         latent_model_input,
@@ -2697,23 +3189,36 @@ def create_pipeline():
                     # perform guidance
                     if self.do_classifier_free_guidance:
                         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                        noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        noise_pred = noise_pred_uncond + self.guidance_scale * (
+                            noise_pred_text - noise_pred_uncond
+                        )
 
                     # compute the previous noisy sample x_t -> x_t-1
-                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                    latents = self.scheduler.step(
+                        noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                    )[0]
 
                     if callback_on_step_end is not None:
                         callback_kwargs = {}
                         for k in callback_on_step_end_tensor_inputs:
                             callback_kwargs[k] = locals()[k]
-                        callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                        callback_outputs = callback_on_step_end(
+                            self, i, t, callback_kwargs
+                        )
 
                         latents = callback_outputs.pop("latents", latents)
-                        prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                        negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                        prompt_embeds = callback_outputs.pop(
+                            "prompt_embeds", prompt_embeds
+                        )
+                        negative_prompt_embeds = callback_outputs.pop(
+                            "negative_prompt_embeds", negative_prompt_embeds
+                        )
 
                     # call the callback, if provided
-                    if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                    if i == len(timesteps) - 1 or (
+                        (i + 1) > num_warmup_steps
+                        and (i + 1) % self.scheduler.order == 0
+                    ):
                         progress_bar.update()
                         if callback is not None and i % callback_steps == 0:
                             step_idx = i // getattr(self.scheduler, "order", 1)
@@ -2721,16 +3226,23 @@ def create_pipeline():
 
             # If we do sequential model offloading, let's offload unet and controlnet
             # manually for max memory savings
-            if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
+            if (
+                hasattr(self, "final_offload_hook")
+                and self.final_offload_hook is not None
+            ):
                 self.unet.to("cpu")
                 self.controlnet.to("cpu")
                 torch.cuda.empty_cache()
 
             if not output_type == "latent":
-                image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False, generator=generator)[
-                    0
-                ]
-                image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+                image = self.vae.decode(
+                    latents / self.vae.config.scaling_factor,
+                    return_dict=False,
+                    generator=generator,
+                )[0]
+                image, has_nsfw_concept = self.run_safety_checker(
+                    image, device, prompt_embeds.dtype
+                )
             else:
                 image = latents
                 has_nsfw_concept = None
@@ -2740,7 +3252,9 @@ def create_pipeline():
             else:
                 do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
 
-            image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
+            image = self.image_processor.postprocess(
+                image, output_type=output_type, do_denormalize=do_denormalize
+            )
 
             # Offload all models
             self.maybe_free_model_hooks()
@@ -2748,6 +3262,8 @@ def create_pipeline():
             if not return_dict:
                 return (image, has_nsfw_concept)
 
-            return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
+            return StableDiffusionPipelineOutput(
+                images=image, nsfw_content_detected=has_nsfw_concept
+            )
 
     return StableDiffusionControlNetPipeline, StableDiffusionXLControlNetPipeline
