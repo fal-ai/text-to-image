@@ -4,6 +4,7 @@ from typing import Literal
 
 from fal import cached, function
 from fal.toolkit import Image, ImageSizeInput, get_image_size, download_file
+from fal.toolkit.image import ImageSize
 from pydantic import BaseModel, Field
 
 from text_to_image.runtime import IMAGE_DIR, SUPPORTED_SCHEDULERS, GlobalRuntime, filter_by
@@ -353,6 +354,7 @@ if __name__ == "__main__":
     input = InputParameters(
         # model_name=f"stabilityai/stable-diffusion-xl-base-1.0",
         model_name="SG161222/Realistic_Vision_V2.0",
+        # model_name="runwayml/stable-diffusion-v1-5",
         prompt="Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
         # loras=[
         #     LoraWeight(
@@ -381,6 +383,8 @@ if __name__ == "__main__":
         num_images=1,
         seed=42,
         model_architecture="sd",
+        scheduler="Euler A",
+        image_size=ImageSize(width=512, height=512)
         # scheduler="LCM",
     )
     local = generate_image.on(serve=False, keep_alive=0)

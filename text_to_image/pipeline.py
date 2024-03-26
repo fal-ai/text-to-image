@@ -843,8 +843,6 @@ def create_pipeline():
             )
             expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
 
-            print("passed_add_embed_dim", passed_add_embed_dim)
-
             if expected_add_embed_dim != passed_add_embed_dim:
                 raise ValueError(
                     f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
@@ -2486,7 +2484,6 @@ def create_pipeline():
                 control_guidance_end,
                 callback_on_step_end_tensor_inputs,
             )
-            print("checked inputs")
 
             self._guidance_scale = guidance_scale
             self._clip_skip = clip_skip
@@ -2563,7 +2560,7 @@ def create_pipeline():
                 images = []
 
                 # Nested lists as ControlNet condition
-                if isinstance(image[0], list):
+                if len(image) > 0 and isinstance(image[0], list):
                     # Transpose the nested image list
                     image = [list(t) for t in zip(*image)]
 
@@ -2665,7 +2662,7 @@ def create_pipeline():
                             controlnet_cond_scale = controlnet_cond_scale[0]
                         cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
-                    if isinstance(controlnet, MultiControlNetModel) and len(controlnet.nets) > 0:
+                    if isinstance(controlnet, MultiControlNetModel) and len(controlnet.nets) == 0:
                         down_block_res_samples, mid_block_res_sample = None, None
                     else:
                         down_block_res_samples, mid_block_res_sample = self.controlnet(
