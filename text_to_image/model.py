@@ -53,6 +53,38 @@ class Embedding(BaseModel):
         """,
     )
 
+# make the ip adapter weight loader class
+class IPAdapter(BaseModel):
+    path: str = Field(
+        description="URL or the path to the IP adapter weights.",
+        examples=[
+            "https://civitai.com/api/download/models/135931",
+        ],
+    )
+    model_subfolder: str | None = Field(
+        description="Subfolder in the model directory where the IP adapter weights are stored.",
+        examples=[
+            "sdxl_models",
+        ],
+    )
+    weight_name: str | None = Field(
+        description="Name of the weight file.",
+        examples=[
+            "ip-adapter-plus_sdxl_vit-h.safetensors",
+        ],
+    )
+    image_encoder_path: str | None = Field(
+        description="URL or the path to the image encoder weights.",
+        examples=[
+            "h94/IP-Adapter",
+        ],
+    )
+    image_encoder_subpath: str | None = Field(
+        description="Subpath to the image encoder weights.",
+        examples=[
+            "models/image_encoder",
+        ],
+    )
 
 class ControlNet(BaseModel):
     path: str = Field(
